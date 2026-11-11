@@ -49,7 +49,7 @@ Remove the marketplace and add it again without `#<branch>` afterwards, or it st
 The automated tests cannot open a real Anki. Before a release, set `delay_seconds` to 3 in `/config` and check:
 
 1. A long prompt ("count slowly to 30 using the Bash tool, one sleep per number") opens Anki after the delay.
-2. When Claude finishes and you pause, Anki quits and the terminal comes back. The first time, macOS asks for Automation permission.
+2. When Claude finishes and you pause, the terminal comes back to the front and Anki stays open behind it. With `when_done` set to `quit`, Anki quits instead, and the first time macOS asks for Automation permission.
 3. A quick question ("what is 2 + 2?") never opens Anki.
 4. Typing in the terminal while the delay runs out keeps Anki closed until you pause.
 5. A permission prompt mid-turn sends Anki away.

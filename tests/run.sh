@@ -135,7 +135,9 @@ reset() {
     ANKI_BREAK_APP_DIR="$WORK/apps"
     ANKI_BREAK_SYNC=1
     __CFBundleIdentifier=$TERM_APP
-    export CLAUDE_PLUGIN_DATA ANKI_BREAK_APP_DIR ANKI_BREAK_SYNC __CFBundleIdentifier
+    # Most tests cover quitting. The default (keep) has its own tests below.
+    CLAUDE_PLUGIN_OPTION_WHEN_DONE=quit
+    export CLAUDE_PLUGIN_DATA ANKI_BREAK_APP_DIR ANKI_BREAK_SYNC __CFBundleIdentifier CLAUDE_PLUGIN_OPTION_WHEN_DONE
 }
 
 # hook <action> <session_id>: run an action the way Claude Code does.
@@ -343,6 +345,17 @@ hook stop s1
 not_called "osascript quit"
 called "open -b $TERM_APP"
 
+CURRENT="by default Claude comes back and Anki keeps running"
+reset
+unset CLAUDE_PLUGIN_OPTION_WHEN_DONE
+hook start s1
+called "open -b $ANKI"
+hook stop s1
+not_called "osascript quit"
+called "open -b $TERM_APP"
+no_file "$DATA/launched"
+log_has "when_done=keep"
+
 CURRENT="when_done=keep leaves Anki running"
 reset
 CLAUDE_PLUGIN_OPTION_WHEN_DONE=keep
@@ -507,7 +520,8 @@ for pair in "abc:15" "0:0" "45:45" "12.5:12" "9999:600" "99999999999999:15" "-5:
 done
 
 CURRENT="when_done setting is validated"
-for value in "KEEP" " keep "; do
+# shellcheck disable=SC2016
+for value in "" "KEEP" " keep " "close" '${user_config.when_done}'; do
     reset
     CLAUDE_PLUGIN_OPTION_WHEN_DONE=$value
     export CLAUDE_PLUGIN_OPTION_WHEN_DONE
@@ -515,8 +529,7 @@ for value in "KEEP" " keep "; do
     hook stop s1
     not_called "osascript quit"
 done
-# shellcheck disable=SC2016
-for value in "" "close" '${user_config.when_done}'; do
+for value in "quit" "QUIT" " Quit "; do
     reset
     CLAUDE_PLUGIN_OPTION_WHEN_DONE=$value
     export CLAUDE_PLUGIN_OPTION_WHEN_DONE
