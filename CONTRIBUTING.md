@@ -55,6 +55,7 @@ The automated tests cannot open a real Anki. Before a release, set `delay_second
 5. A permission prompt mid-turn sends Anki away.
 6. An Anki you opened yourself comes back to the front during a turn but is not quit.
 7. `/anki-break:doctor` shows the last prompt and the log.
+8. After `/anki-break:pause`, a long prompt in that chat does not open Anki, while another chat still does. `/anki-break:resume` turns it back on, and `/anki-break:pause 1m` ends by itself.
 
 ## Layout
 
@@ -64,6 +65,8 @@ The automated tests cannot open a real Anki. Before a release, set `delay_second
 hooks/hooks.json                 the hook events
 scripts/anki-break.sh            everything the hooks do
 skills/doctor/SKILL.md           /anki-break:doctor
+skills/pause/SKILL.md            /anki-break:pause
+skills/resume/SKILL.md           /anki-break:resume
 tests/run.sh                     tests with stubbed macOS commands
 assets/icon.svg                  directory icon
 SPEC.md                          what the plugin does and why

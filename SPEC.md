@@ -19,8 +19,10 @@ Turn the time spent waiting for Claude into flashcard reviews. When Claude has b
 | `hooks/hooks.json` | Calls `scripts/anki-break.sh` on the events below. Shell form, `timeout` 10 s. |
 | `scripts/anki-break.sh` | POSIX `sh` script. Public actions `start`, `stop`, `doctor`. Background actions `open-later`, `finish`. |
 | `skills/doctor/SKILL.md` | `/anki-break:doctor`, user-invoked only (`disable-model-invocation: true`). Runs `doctor` and explains the result. |
+| `skills/pause/SKILL.md` | `/anki-break:pause [duration]`, user-invoked only. Pauses Anki-Break in the current chat. |
+| `skills/resume/SKILL.md` | `/anki-break:resume`, user-invoked only. Ends the pause in the current chat. |
 
-No agents, MCP servers or other skills.
+No agents or MCP servers.
 
 ## Events
 
@@ -77,8 +79,18 @@ The `launched` flag stays until that Anki process is gone, so a refused or slow 
 
 Anki that the user opened themselves is never quit, only sent to the back.
 
-**doctor** (takes the data folder as an argument, because commands run through the Bash tool get no plugin variables)
-Prints the system, whether Anki is installed and running, the settings logged at the last prompt, the working sessions, the last log lines and how to grant the Automation permission. Changes nothing.
+**pause** (from `/anki-break:pause`, which passes the data folder and the session id, because commands run through the Bash tool get no plugin variables)
+1. Refuse with a message on stderr and exit code 2 when the folder does not exist, the session id is not 1 to 128 letters, digits, `_` or `-` (for example a literal `${CLAUDE_SESSION_ID}`), or the duration is not `30`, `30m` or `2h` style, between 1 minute and 24 hours.
+2. Write `paused/<session_id>`: the end time in epoch seconds, or 0 for "until resumed".
+3. Remove this session's working mark, so a turn that is already counting down does not open Anki.
+4. Print one line saying how long the pause lasts.
+
+A paused session's `start` does nothing, and `open-later` stops when it finds the pause. A timed pause ends by itself. A pause also ends when the chat ends (`SessionEnd`).
+
+**resume** (same arguments): remove the pause file and say whether the chat was paused.
+
+**doctor** (takes the data folder and, from the skill, the session id as arguments, because commands run through the Bash tool get no plugin variables)
+Prints the system, whether Anki is installed and running, the settings logged at the last prompt, whether the current chat is paused, the working sessions, the last log lines and how to grant the Automation permission. Changes nothing.
 
 ## Settings (`userConfig`)
 
@@ -95,12 +107,13 @@ All state lives in `${CLAUDE_PLUGIN_DATA}`. Without it, the hooks do nothing.
 
 - `sessions/<session_id>`: the turn token while that session is working
 - `stops/<session_id>`: the time of that session's last stop
+- `paused/<session_id>`: the end of that session's pause in epoch seconds, or 0 until resumed
 - `launched`: present while an Anki that Anki-Break opened may still run, holds its pid
 - `starting`: present while a launch is in progress
 - `lock/pid`: the lock directory and its owner's pid
 - `log`: one line per action, trimmed to the last 200 lines when it passes 400
 
-Working marks older than 2 hours are ignored. Files in `sessions/` and `stops/` older than 24 hours are deleted on each `start`. The lock is broken only when its owner process is gone (or never wrote its pid), and a waiter gives up after two minutes. Nothing is written anywhere else.
+Working marks older than 2 hours are ignored. Files in `sessions/` and `stops/` older than 24 hours are deleted on each `start`. A pause file is deleted when its time is up, when the chat ends, on resume, or after 7 days for a chat that never ended. The lock is broken only when its owner process is gone (or never wrote its pid), and a waiter gives up after two minutes. Nothing is written anywhere else.
 
 ## macOS commands used
 

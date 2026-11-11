@@ -12,10 +12,10 @@ allowed-tools:
 Run the diagnosis. It only reads, it changes nothing:
 
 ```bash
-sh "${CLAUDE_PLUGIN_ROOT}/scripts/anki-break.sh" doctor "${CLAUDE_PLUGIN_DATA}"
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/anki-break.sh" doctor "${CLAUDE_PLUGIN_DATA}" "${CLAUDE_SESSION_ID}"
 ```
 
-If either path above still reads literally `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_PLUGIN_DATA}`, the script is `../../scripts/anki-break.sh` relative to the directory this SKILL.md was read from. Run it with only `doctor` and no folder argument.
+If either path above still reads literally `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_PLUGIN_DATA}`, the script is `../../scripts/anki-break.sh` relative to the directory this SKILL.md was read from. Run it with only `doctor` and no further arguments.
 
 Then tell the user, in a few short lines, what the output means and what to do. Match the output to the first row that applies:
 
@@ -24,6 +24,7 @@ Then tell the user, in a few short lines, what the output means and what to do. 
 | `system:` is not macOS | Anki-Break only works when Claude Code runs on the same Mac as Anki. Cloud sessions and other systems are skipped on purpose. |
 | `anki installed: no` | Install Anki desktop from apps.ankiweb.net into the Applications folder. |
 | `host app: none` | Claude Code was not started from a terminal or editor app (for example over SSH or from a scheduled job). Anki-Break only works when Claude Code runs in an app on this Mac. |
+| `this chat: paused` | Anki-Break was paused in this chat with `/anki-break:pause`. Run `/anki-break:resume` to turn it back on. |
 | `disabled: yes` | `ANKI_BREAK_DISABLE` is set in the environment Claude Code was started from. Unset it and restart Claude Code. |
 | `last prompt: no prompt seen yet` | The hooks have not run. Run `/reload-plugins` or start a new session, and check `/plugin` for errors. |
 | The log shows `start` lines but never `opened anki` | Claude finished before the delay ran out, the user was typing or in another app, or another session had just stopped. The log names the reason. Lower `delay_seconds` in `/config`, or give Claude a longer task to test. |

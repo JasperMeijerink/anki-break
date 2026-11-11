@@ -146,6 +146,19 @@ hook() {
         $TEST_SHELL "$SCRIPT" "$1" >"$WORK/stdout" 2>"$WORK/stderr"
 }
 
+# hook_event <action> <session_id> <event>: the same, with a given event name.
+hook_event() {
+    printf '{"session_id":"%s","hook_event_name":"%s"}' "$2" "$3" |
+        $TEST_SHELL "$SCRIPT" "$1" >"$WORK/stdout" 2>"$WORK/stderr"
+}
+
+# skill <action> [args...]: run pause or resume the way their skills do.
+skill() {
+    action=$1
+    shift
+    $TEST_SHELL "$SCRIPT" "$action" "$@" >"$WORK/stdout" 2>"$WORK/stderr"
+}
+
 token_of() {
     sed -n 1p "$DATA/sessions/$1" 2>/dev/null
 }
@@ -603,6 +616,117 @@ wait_for_call "open -b $ANKI"
 hook stop s1
 quiet
 wait_for_call "osascript quit"
+
+CURRENT="pause stops Anki opening in that chat only"
+reset
+skill pause "$DATA" s1
+check
+grep -q "paused in this chat until you run /anki-break:resume" "$WORK/stdout" || fail "pause message"
+content "$DATA/paused/s1" 0
+hook start s1
+quiet
+no_calls
+no_file "$DATA/sessions/s1"
+log_has "start s1 skipped, paused in this chat"
+hook start s2
+called "open -g -b $ANKI"
+
+CURRENT="pause during a turn keeps that turn from opening Anki"
+reset
+ANKI_BREAK_SYNC=skip hook start s1
+token=$(token_of s1)
+skill pause "$DATA" s1
+no_file "$DATA/sessions/s1"
+$TEST_SHELL "$SCRIPT" open-later s1 "$token" </dev/null >/dev/null 2>&1
+not_called "open -g -b $ANKI"
+
+CURRENT="resume turns it back on"
+reset
+skill pause "$DATA" s1
+skill resume "$DATA" s1
+check
+grep -q "on again in this chat" "$WORK/stdout" || fail "resume message"
+no_file "$DATA/paused/s1"
+hook start s1
+called "open -g -b $ANKI"
+skill resume "$DATA" s1
+check
+grep -q "was not paused" "$WORK/stdout" || fail "resume when not paused"
+
+CURRENT="a timed pause ends by itself"
+reset
+skill pause "$DATA" s1 30m
+check
+grep -q "paused in this chat for 30 minutes, until [0-9][0-9]:[0-9][0-9]" "$WORK/stdout" || fail "timed pause message: $(cat "$WORK/stdout")"
+hook start s1
+not_called "open -g -b $ANKI"
+echo 1 >"$DATA/paused/s1"
+hook start s1
+called "open -g -b $ANKI"
+no_file "$DATA/paused/s1"
+
+CURRENT="pause durations are validated"
+for pair in "30:30" "30m:30" "2h:120" "08h:480" "1:1" "1440:1440" "24h:1440" " 45M :45"; do
+    reset
+    skill pause "$DATA" s1 "${pair%:*}"
+    check
+    grep -q "for ${pair##*:} minutes" "$WORK/stdout" || fail "duration ${pair%:*}: $(cat "$WORK/stdout" "$WORK/stderr")"
+done
+for value in "0" "0m" "1441" "25h" "abc" "5d" "-5" "30 minutes" "1.5h"; do
+    reset
+    skill pause "$DATA" s1 "$value"
+    status=$?
+    check
+    [ "$status" -eq 2 ] || fail "duration '$value' accepted"
+    check
+    grep -q "minutes or hours" "$WORK/stderr" || fail "duration '$value' message"
+    no_file "$DATA/paused/s1"
+done
+
+CURRENT="pause refuses an unknown chat or folder"
+reset
+# shellcheck disable=SC2016
+skill pause "$DATA" '${CLAUDE_SESSION_ID}'
+status=$?
+check
+[ "$status" -eq 2 ] || fail "literal session id accepted"
+check
+grep -q "could not tell which chat" "$WORK/stderr" || fail "session id message"
+# shellcheck disable=SC2016
+for folder in '${CLAUDE_PLUGIN_DATA}' "relative/folder" ""; do
+    skill pause "$folder" s1
+    status=$?
+    check
+    [ "$status" -eq 2 ] || fail "folder '$folder' accepted"
+    check
+    grep -q "data folder" "$WORK/stderr" || fail "folder message for '$folder'"
+done
+skill pause "$WORK/fresh/data" s1
+has_file "$WORK/fresh/data/paused/s1"
+rm -rf "$WORK/fresh"
+skill resume "$DATA" "../escape"
+status=$?
+check
+[ "$status" -eq 2 ] || fail "path in session id accepted"
+
+CURRENT="a pause ends with the chat"
+reset
+skill pause "$DATA" s1
+hook_event stop s1 SessionEnd
+no_file "$DATA/paused/s1"
+skill pause "$DATA" s1
+hook_event stop s1 Stop
+has_file "$DATA/paused/s1"
+
+CURRENT="doctor shows whether this chat is paused"
+reset
+skill pause "$DATA" s1
+$TEST_SHELL "$SCRIPT" doctor "$DATA" s1 >"$WORK/stdout" 2>&1
+check
+grep -q "this chat: paused until /anki-break:resume" "$WORK/stdout" || fail "doctor paused line"
+$TEST_SHELL "$SCRIPT" doctor "$DATA" s2 >"$WORK/stdout" 2>&1
+check
+grep -q "this chat: active" "$WORK/stdout" || fail "doctor active line"
 
 CURRENT="doctor reports and changes nothing"
 reset
