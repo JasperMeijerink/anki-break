@@ -1,7 +1,7 @@
 # Working on Anki-Break
 
 - Read SPEC.md before changing anything. Update it when a decision changes.
-- After every change run `sh tests/run.sh`, `dash tests/run.sh`, `shellcheck scripts/*.sh tests/*.sh` and `claude plugin validate --strict --profile directory .`.
+- After every change run `sh tests/run.sh`, `TEST_SHELL=dash dash tests/run.sh`, `TEST_SHELL="bash --posix" bash --posix tests/run.sh`, `shellcheck scripts/*.sh tests/*.sh` and `claude plugin validate --strict --profile directory .`.
 - Settings only via `userConfig`. The script validates every `CLAUDE_PLUGIN_OPTION_*` value and falls back to defaults.
 - State only in `${CLAUDE_PLUGIN_DATA}`, with the cleanup rules in SPEC.md.
 - POSIX `sh` only. No apostrophes inside single-quoted strings. No `case` inside `$(...)`.

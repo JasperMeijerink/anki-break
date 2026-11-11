@@ -8,7 +8,7 @@ Turn the time spent waiting for Claude into flashcard reviews. When Claude has b
 
 ## Platform
 
-- macOS only in v1. Claude Code must run on the same Mac as Anki desktop: the terminal, an IDE or the desktop app's Code tab.
+- macOS only. Claude Code must run on the same Mac as Anki desktop: the terminal, an IDE or the desktop app's Code tab.
 - On any other system, and in cloud sessions, every hook exits at once and does nothing.
 - iOS is out of scope: Claude Code does not run there, and iOS apps cannot open and close each other.
 
@@ -128,12 +128,12 @@ Working marks older than 2 hours are ignored. Files in `sessions/` and `stops/` 
 
 - Reopening Anki after the user answers a permission prompt mid-turn. It reopens on the next prompt.
 - Showing cards inside Claude Code (other plugins do that through AnkiConnect).
-- Windows and Linux in v1.
+- Windows and Linux.
 
 ## Name
 
-"Anki" is a trademark of Ankitects. The README says the plugin is not affiliated with Anki, and the icon is original. The name may change before a directory submission.
+"Anki" is a trademark of Ankitects. The README says the plugin is not affiliated with Anki, and the icon is original.
 
 ## Tests
 
-`tests/run.sh` runs every action against stub `uname`, `defaults`, `open`, `osascript`, `lsappinfo`, `ioreg`, `sleep` and `mdfind` commands, including one run through the real detached background path, and checks the calls made and the state left behind. It runs under `sh`, `dash` and `bash --posix`, and on macOS in CI. Nothing has been tested with a real Anki yet.
+`tests/run.sh` runs every action against stub `uname`, `defaults`, `open`, `osascript`, `lsappinfo`, `ioreg`, `sleep` and `mdfind` commands, including one run through the real detached background path, and checks the calls made and the state left behind. It runs under `sh`, `dash` and `bash --posix`, and on macOS in CI. Releases are also checked by hand on a real Mac (see CONTRIBUTING.md).

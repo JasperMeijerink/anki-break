@@ -1,7 +1,7 @@
 {
   "name": "anki-break",
   "displayName": "Anki-Break",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Turns waiting for Claude into flashcard time. On macOS, Anki opens when Claude has been working for a few seconds, and you switch back to Claude when it is done or needs you.",
   "author": {
     "name": "Jasper Meijerink",

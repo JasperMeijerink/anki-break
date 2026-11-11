@@ -1,7 +1,9 @@
 #!/bin/sh
 # Tests for scripts/anki-break.sh.
 #
-#   sh tests/run.sh        (also: dash tests/run.sh, bash --posix tests/run.sh)
+#   sh tests/run.sh
+#   TEST_SHELL=dash dash tests/run.sh
+#   TEST_SHELL="bash --posix" bash --posix tests/run.sh
 #
 # Every macOS command the script uses is replaced by a stub that records its
 # calls in $STUB/calls, so the tests run anywhere. TEST_SHELL picks the shell
