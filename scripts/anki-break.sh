@@ -8,19 +8,22 @@
 # Internal actions, run in the background: open-later, finish.
 # Hook events pass JSON on stdin. See SPEC.md for the full behaviour.
 
-ANKI_ID="net.ankiweb.dtop"
 DEFAULT_DELAY=15
 MAX_DELAY=600
 IDLE_MS=1500           # focus only moves after this much keyboard and mouse quiet
 IDLE_WAIT=60           # seconds to wait for that quiet before giving up
-LAUNCH_WAIT=20         # seconds to wait for Anki to come to the front
+LAUNCH_WAIT=30         # seconds to wait for a launching Anki to run
+QUIET_SECONDS=60       # after another session stops, Anki stays closed this long
 ACTIVE_MINUTES=120     # working marks older than this are ignored
-CLEANUP_MINUTES=1440   # session files older than this are deleted
+CLEANUP_MINUTES=1440   # session and stop files older than this are deleted
 LOG_LINES=200
 
 SELF=$0
 DATA=${CLAUDE_PLUGIN_DATA:-}
 SESSIONS="$DATA/sessions"
+STOPS="$DATA/stops"
+ANKI_PATH=""
+ANKI_ID=""
 
 # ---------------------------------------------------------------- settings
 
@@ -70,7 +73,15 @@ is_mac() {
     [ "$(uname -s 2>/dev/null)" = Darwin ]
 }
 
-anki_path() {
+valid_bundle() {
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$'
+}
+
+# Anki's bundle id changed: net.ankiweb.dtop up to 25.06, net.ankiweb.launcher
+# for 25.07 to 25.09, net.ankiweb.anki from 26.05. Read it from the app itself.
+find_anki() {
+    ANKI_PATH=""
+    ANKI_ID=""
     # ANKI_BREAK_APP_DIR replaces the standard folders. It exists for the tests.
     if [ -n "${ANKI_BREAK_APP_DIR:-}" ]; then
         set -- "$ANKI_BREAK_APP_DIR"
@@ -79,19 +90,33 @@ anki_path() {
     fi
     for dir in "$@"; do
         if [ -d "$dir/Anki.app" ]; then
-            printf '%s\n' "$dir/Anki.app"
-            return 0
+            ANKI_PATH="$dir/Anki.app"
+            break
         fi
     done
-    # Spotlight finds Anki installed anywhere else.
-    mdfind "kMDItemCFBundleIdentifier == '$ANKI_ID'" 2>/dev/null | head -n 1
+    if [ -z "$ANKI_PATH" ]; then
+        ANKI_PATH=$(mdfind "kMDItemCFBundleIdentifier == 'net.ankiweb.anki' || kMDItemCFBundleIdentifier == 'net.ankiweb.launcher' || kMDItemCFBundleIdentifier == 'net.ankiweb.dtop'" 2>/dev/null | head -n 1)
+    fi
+    [ -n "$ANKI_PATH" ] || return 1
+    ANKI_ID=$(defaults read "$ANKI_PATH/Contents/Info" CFBundleIdentifier 2>/dev/null)
+    if ! valid_bundle "$ANKI_ID"; then
+        ANKI_ID=net.ankiweb.anki
+    fi
+    return 0
 }
 
-valid_bundle() {
-    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$'
+# The app Claude Code runs in. macOS passes __CFBundleIdentifier to the shells
+# of Terminal, iTerm, VS Code and other apps. Cron jobs, launchd jobs and SSH
+# sessions do not have it, so scripted runs never open Anki.
+host_app() {
+    host=${__CFBundleIdentifier:-}
+    if valid_bundle "$host" && [ "$host" != "$ANKI_ID" ]; then
+        printf '%s\n' "$host"
+    fi
 }
 
-# lsappinfo needs no permission. It prints "[ NULL ]" for missing values.
+# lsappinfo needs no permission. It prints "[ NULL ]" or nothing when an app
+# is not running.
 app_asn() {
     lsappinfo find "bundleid=$1" 2>/dev/null | grep -v NULL | head -n 1
 }
@@ -107,7 +132,8 @@ anki_running() {
 anki_pid() {
     asn=$(app_asn "$ANKI_ID")
     [ -n "$asn" ] || return 0
-    lsappinfo info -only pid "$asn" 2>/dev/null | sed -n 's/.*"pid"[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1
+    lsappinfo info -only pid "$asn" 2>/dev/null |
+        sed -n 's/.*"pid"[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1
 }
 
 front_app() {
@@ -119,7 +145,7 @@ front_app() {
 }
 
 idle_ms() {
-    # Time since the last keyboard or mouse input. Needs no permission.
+    # Time since the last keyboard or mouse input, in nanoseconds. No permission needed.
     value=$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ { printf "%d\n", $NF / 1000000; exit }')
     printf '%s\n' "${value:-999999}"
 }
@@ -136,21 +162,37 @@ wait_until_idle() {
     return 0
 }
 
+# A directory lock that records its owner. It is only broken when that
+# process is gone, never because it is held for a long time.
 lock() {
+    [ -n "$DATA" ] || return 1
     tries=0
     while ! mkdir "$DATA/lock" 2>/dev/null; do
         tries=$((tries + 1))
-        if [ "$tries" -ge 15 ]; then
-            # A lock that old belongs to a process that died.
-            rmdir "$DATA/lock" 2>/dev/null
-            tries=0
+        holder=$(cat "$DATA/lock/pid" 2>/dev/null)
+        if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+            rm -rf "$DATA/lock"
+            continue
+        fi
+        if [ -z "$holder" ] && [ "$tries" -ge 5 ]; then
+            # The owner died between creating the lock and writing its pid.
+            rm -rf "$DATA/lock"
+            continue
+        fi
+        if [ "$tries" -ge 120 ]; then
+            log "lock busy for two minutes, giving up"
+            return 1
         fi
         sleep 1
     done
+    echo $$ >"$DATA/lock/pid"
+    return 0
 }
 
 unlock() {
-    rmdir "$DATA/lock" 2>/dev/null
+    if [ "$(cat "$DATA/lock/pid" 2>/dev/null)" = $$ ]; then
+        rm -rf "$DATA/lock"
+    fi
 }
 
 session_from_stdin() {
@@ -164,14 +206,47 @@ session_from_stdin() {
     printf '%s\n' "${sid:-default}"
 }
 
-# A working mark holds the turn token on line 1 and the host app on line 2.
 still_working() {
     [ -f "$SESSIONS/$1" ] && [ "$(sed -n 1p "$SESSIONS/$1" 2>/dev/null)" = "$2" ]
+}
+
+# True when the session already started a newer turn than the given one.
+newer_turn() {
+    [ -f "$SESSIONS/$1" ] && [ "$(sed -n 1p "$SESSIONS/$1" 2>/dev/null)" != "$2" ]
 }
 
 working_count() {
     [ -d "$SESSIONS" ] || { echo 0; return 0; }
     find "$SESSIONS" -type f -mmin "-$ACTIVE_MINUTES" | wc -l | tr -d ' '
+}
+
+# True when a session other than $1 stopped in the last QUIET_SECONDS: it may
+# be waiting for the user, so Anki should not cover it.
+other_recent_stop() {
+    [ -d "$STOPS" ] || return 1
+    now=$(date +%s)
+    for file in "$STOPS"/*; do
+        [ -f "$file" ] || continue
+        [ "${file##*/}" = "$1" ] && continue
+        stamp=$(cat "$file" 2>/dev/null)
+        case $stamp in
+            '' | *[!0-9]*) continue ;;
+        esac
+        if [ $((now - stamp)) -lt "$QUIET_SECONDS" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Forget a launch once that Anki is gone, or when another Anki runs now.
+forget_dead_launch() {
+    [ -f "$DATA/launched" ] || return 0
+    saved=$(cat "$DATA/launched" 2>/dev/null)
+    current=$(anki_pid)
+    if [ -z "$current" ] || { [ -n "$saved" ] && [ "$saved" != "$current" ]; }; then
+        rm -f "$DATA/launched"
+    fi
 }
 
 in_background() {
@@ -212,18 +287,19 @@ bring_back() {
 
 do_start() {
     sid=$(session_from_stdin)
-    if [ -z "$DATA" ] || disabled || ! is_mac || [ -z "$(anki_path)" ]; then
+    if [ -z "$DATA" ] || disabled || ! is_mac || ! find_anki; then
         return 0
     fi
-    mkdir -p "$SESSIONS" 2>/dev/null || return 0
-    find "$SESSIONS" -type f -mmin "+$CLEANUP_MINUTES" -exec rm -f {} + 2>/dev/null
-    token="$(date +%s).$$"
-    host=$(front_app)
-    if ! valid_bundle "$host" || [ "$host" = "$ANKI_ID" ] || [ "$host" = com.apple.loginwindow ]; then
-        host=""
+    host=$(host_app)
+    if [ -z "$host" ]; then
+        # No terminal or editor behind this Claude Code: a scripted run.
+        return 0
     fi
-    printf '%s\n%s\n' "$token" "$host" >"$SESSIONS/$sid"
-    log "start $sid from ${host:-unknown app} (delay_seconds=$(delay_seconds) when_done=$(when_done))"
+    mkdir -p "$SESSIONS" "$STOPS" 2>/dev/null || return 0
+    find "$SESSIONS" "$STOPS" -type f -mmin "+$CLEANUP_MINUTES" -exec rm -f {} + 2>/dev/null
+    token="$(date +%s).$$"
+    printf '%s\n' "$token" >"$SESSIONS/$sid"
+    log "start $sid from $host (delay_seconds=$(delay_seconds) when_done=$(when_done))"
     trim_log
     in_background open-later "$sid" "$token"
 }
@@ -231,82 +307,105 @@ do_start() {
 do_open_later() {
     sid=$1
     token=$2
+    find_anki || return 0
+    host=$(host_app)
+    [ -n "$host" ] || return 0
     sleep "$(delay_seconds)"
     still_working "$sid" "$token" || return 0
+    if other_recent_stop "$sid"; then
+        log "another session just stopped, anki stays closed this turn"
+        return 0
+    fi
     if ! wait_until_idle; then
         log "user kept typing, anki stays closed this turn"
         return 0
     fi
-    host=$(sed -n 2p "$SESSIONS/$sid" 2>/dev/null)
 
-    lock
+    lock || return 0
     if ! still_working "$sid" "$token"; then
         unlock
         return 0
     fi
     front=$(front_app)
-    if [ "$front" = "$ANKI_ID" ] || [ "$front" = com.apple.loginwindow ]; then
+    if [ "$front" = "$ANKI_ID" ]; then
         unlock
         return 0
     fi
-    if [ -n "$host" ] && [ "$front" != "$host" ]; then
-        log "user is in $front, not interrupting"
+    if [ "$front" != "$host" ]; then
+        log "user is in ${front:-another app}, not interrupting"
         unlock
         return 0
     fi
+    forget_dead_launch
+    launching=no
     if ! anki_running; then
+        launching=yes
         : >"$DATA/launched"
+        : >"$DATA/starting"
     fi
-    : >"$DATA/starting"
     unlock
 
-    if ! open -b "$ANKI_ID" 2>/dev/null; then
-        log "could not open anki"
-        rm -f "$DATA/starting"
-        if [ ! -s "$DATA/launched" ]; then rm -f "$DATA/launched"; fi
-        return 0
-    fi
-    log "opened anki for $sid"
-
-    # Anki can take a few seconds to show its window.
-    waited=0
-    while [ "$waited" -lt "$LAUNCH_WAIT" ] && [ "$(front_app)" != "$ANKI_ID" ]; do
-        sleep 1
-        waited=$((waited + 1))
-    done
-    if [ -f "$DATA/launched" ] && [ ! -s "$DATA/launched" ]; then
+    typing=no
+    if [ "$launching" = yes ]; then
+        # Launch without activating, so a slow start never takes the keyboard.
+        if ! open -g -b "$ANKI_ID" 2>/dev/null; then
+            log "could not open anki"
+            rm -f "$DATA/starting" "$DATA/launched"
+            return 0
+        fi
+        waited=0
+        while [ "$waited" -lt "$LAUNCH_WAIT" ] && ! anki_running; do
+            sleep 1
+            waited=$((waited + 1))
+        done
         anki_pid >"$DATA/launched"
+        log "launched anki for $sid"
+        if ! wait_until_idle; then
+            typing=yes
+        fi
     fi
 
-    lock
+    lock || return 0
     rm -f "$DATA/starting"
-    if still_working "$sid" "$token"; then
+    if ! still_working "$sid" "$token"; then
         unlock
+        log "claude finished while anki was starting"
+        do_finish "$sid" "$token"
+        return 0
+    fi
+    front=$(front_app)
+    if [ "$typing" = yes ] || [ "$front" != "$host" ]; then
+        unlock
+        log "user is busy, anki stays in the background"
         return 0
     fi
     unlock
-    # Claude finished while Anki was starting: send it away again.
-    log "claude finished while anki was starting"
-    do_finish "$host"
+    open -b "$ANKI_ID" 2>/dev/null && log "opened anki for $sid"
 }
 
 do_stop() {
     sid=$(session_from_stdin)
     [ -n "$DATA" ] || return 0
-    host=$(sed -n 2p "$SESSIONS/$sid" 2>/dev/null)
+    token=$(sed -n 1p "$SESSIONS/$sid" 2>/dev/null)
     rm -f "$SESSIONS/$sid" 2>/dev/null
-    if disabled || ! is_mac; then
+    if [ -z "$token" ] || disabled || ! is_mac; then
+        # Not a turn Anki-Break started, or a second stop for the same one.
         return 0
     fi
-    in_background finish "$host"
+    mkdir -p "$STOPS" 2>/dev/null && date +%s >"$STOPS/$sid"
+    in_background finish "$sid" "$token"
 }
 
 do_finish() {
-    host=$1
+    sid=$1
+    token=$2
+    find_anki || return 0
+    host=$(host_app)
     if [ -f "$DATA/starting" ]; then
-        # open-later is still waiting for Anki and finishes the job then.
+        # Anki is launching in the background. open-later finishes the job.
         return 0
     fi
+    forget_dead_launch
     if [ "$(front_app)" != "$ANKI_ID" ] && [ ! -f "$DATA/launched" ]; then
         return 0
     fi
@@ -318,30 +417,38 @@ do_finish() {
         log "user kept typing, focus left alone"
     fi
 
-    lock
+    lock || return 0
+    if [ -f "$DATA/starting" ]; then
+        unlock
+        return 0
+    fi
+    if newer_turn "$sid" "$token"; then
+        unlock
+        log "a new prompt started in $sid, anki stays"
+        return 0
+    fi
     others=$(working_count)
     front=$(front_app)
+    quit=no
     if [ "$others" -eq 0 ] && [ -f "$DATA/launched" ]; then
-        saved=$(cat "$DATA/launched" 2>/dev/null)
-        current=$(anki_pid)
-        if [ -z "$current" ] || [ "$(when_done)" = keep ]; then
-            # The user quit Anki already, or wants it to stay.
+        if [ "$(when_done)" = keep ]; then
             rm -f "$DATA/launched"
         elif [ "$idle" = yes ]; then
-            # Only quit the Anki we opened, not one the user reopened since.
-            if [ -z "$saved" ] || [ "$saved" = "$current" ]; then
-                quit_anki
-            fi
-            rm -f "$DATA/launched"
+            # The flag stays until this Anki is gone, so a refused or slow
+            # quit is tried again next time.
+            quit=yes
         fi
-        # Still typing: keep the flag, so a later stop can quit it.
     elif [ "$others" -gt 0 ]; then
         log "another session is still working, anki stays open"
     fi
+    unlock
+
     if [ "$front" = "$ANKI_ID" ] && [ "$idle" = yes ]; then
         bring_back "$host"
     fi
-    unlock
+    if [ "$quit" = yes ]; then
+        quit_anki
+    fi
 }
 
 do_doctor() {
@@ -351,6 +458,7 @@ do_doctor() {
     if [ -n "${1:-}" ] && [ -d "$1" ]; then
         DATA=$1
         SESSIONS="$DATA/sessions"
+        STOPS="$DATA/stops"
     fi
     echo "Anki-Break doctor"
     if is_mac; then
@@ -358,9 +466,18 @@ do_doctor() {
     else
         echo "system: $(uname -s 2>/dev/null) (not supported, Anki-Break does nothing here)"
     fi
-    path=$(anki_path 2>/dev/null)
-    echo "anki installed: ${path:-no}"
-    if is_mac && anki_running; then echo "anki running: yes"; else echo "anki running: no"; fi
+    if find_anki; then
+        echo "anki installed: $ANKI_PATH ($ANKI_ID)"
+    else
+        echo "anki installed: no"
+    fi
+    if is_mac && [ -n "$ANKI_ID" ] && anki_running; then echo "anki running: yes"; else echo "anki running: no"; fi
+    host=$(host_app)
+    echo "host app: ${host:-none (Anki-Break only opens Anki for Claude Code started from a terminal or editor app)}"
+    if is_mac; then
+        echo "front app: $(front_app)"
+        echo "idle ms: $(idle_ms)"
+    fi
     if disabled; then echo "disabled: yes (ANKI_BREAK_DISABLE is set)"; else echo "disabled: no"; fi
     if [ -z "$DATA" ]; then
         echo "data folder: unknown (run this through /anki-break:doctor)"
@@ -370,7 +487,11 @@ do_doctor() {
     last=$(grep ' start ' "$DATA/log" 2>/dev/null | tail -n 1)
     echo "last prompt: ${last:-no prompt seen yet}"
     echo "working sessions: $(working_count)"
-    if [ -f "$DATA/launched" ]; then echo "anki opened by anki-break: yes"; else echo "anki opened by anki-break: no"; fi
+    if [ -f "$DATA/launched" ] && is_mac && [ -n "$ANKI_ID" ] && anki_running; then
+        echo "anki opened by anki-break: yes"
+    else
+        echo "anki opened by anki-break: no"
+    fi
     echo "last log lines:"
     if [ -f "$DATA/log" ]; then tail -n 10 "$DATA/log"; else echo "(none yet)"; fi
     echo "quitting Anki needs macOS Automation permission for your terminal app:"
@@ -381,7 +502,7 @@ case "${1:-}" in
     start) do_start ;;
     stop) do_stop ;;
     open-later) do_open_later "${2:-default}" "${3:-}" ;;
-    finish) do_finish "${2:-}" ;;
+    finish) do_finish "${2:-default}" "${3:-}" ;;
     doctor) do_doctor "${2:-}" ;;
     *)
         echo "usage: anki-break.sh start|stop|doctor" >&2

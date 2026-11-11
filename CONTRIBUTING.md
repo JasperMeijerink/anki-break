@@ -72,7 +72,10 @@ SPEC.md                          what the plugin does and why
 ## Design notes
 
 - **Hooks return at once.** `UserPromptSubmit` stdout would become part of Claude's context, and `SessionEnd` hooks get 1.5 seconds. All waiting, opening and quitting runs in a detached background process.
-- **Focus only moves when you are idle.** A switch while you type sends keys to the wrong window, which can grade cards or answer a Claude dialog.
+- **Focus only moves when you are idle.** A switch while you type sends keys to the wrong window, which can grade cards or answer a Claude dialog. A new Anki is launched with `open -g`, so a slow start cannot take the keyboard either.
+- **Bundle id from the app.** Anki changed its bundle id twice, so the script reads it from the installed `Anki.app`.
+- **Host app from the environment.** `__CFBundleIdentifier` names the terminal or editor Claude Code runs in, and is missing for cron, launchd and SSH, which keeps scripted runs from opening Anki.
+- **A lock with an owner.** The lock holds its owner's pid and is only broken when that process is gone.
 - **No AppleScript except the quit.** `lsappinfo` and `ioreg` need no permission. Only quitting Anki sends an Apple event, so macOS asks once.
 - **Only quit what we opened.** The `launched` flag holds Anki's pid, and an Anki the user opened or reopened is never quit.
 - **No settings beyond two.** Everything else follows from the hooks.

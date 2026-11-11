@@ -16,14 +16,15 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/anki-break-test.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT INT TERM
 TESTS=0
 FAILS=0
-ANKI=net.ankiweb.dtop
+ANKI=net.ankiweb.anki
 TERM_APP=com.apple.Terminal
 
 # ---------------------------------------------------------------- stubs
 # $STUB/front          bundle id of the frontmost app
 # $STUB/anki_running   exists while Anki runs; $STUB/anki_pid holds its pid
-# $STUB/not_running    bundle ids of apps that are not running
-# $STUB/front_pending  slow start: polls left before Anki reaches the front
+# $STUB/anki_starting  slow start: polls left before Anki counts as running
+# $STUB/not_running    bundle ids of other apps that are not running
+# STUB_ANKI_ID         Anki's bundle id (default net.ankiweb.anki)
 
 mkdir -p "$WORK/bin"
 
@@ -32,19 +33,26 @@ cat >"$WORK/bin/uname" <<'EOF'
 echo "${STUB_UNAME:-Darwin}"
 EOF
 
+cat >"$WORK/bin/defaults" <<'EOF'
+#!/bin/sh
+echo "${STUB_ANKI_ID:-net.ankiweb.anki}"
+EOF
+
 cat >"$WORK/bin/open" <<'EOF'
 #!/bin/sh
 echo "open $*" >>"$STUB/calls"
 if [ "${STUB_OPEN_FAIL:-}" = 1 ]; then exit 1; fi
+background=no
+if [ "$1" = -g ]; then background=yes; shift; fi
 if [ "$1" = -b ]; then
-    if [ "$2" = net.ankiweb.dtop ]; then
-        : >"$STUB/anki_running"
+    if [ "$2" = "${STUB_ANKI_ID:-net.ankiweb.anki}" ] && [ ! -f "$STUB/anki_running" ]; then
         if [ "${STUB_SLOW_START:-}" = 1 ]; then
-            echo 3 >"$STUB/front_pending"
-            exit 0
+            echo 3 >"$STUB/anki_starting"
+        else
+            : >"$STUB/anki_running"
         fi
     fi
-    echo "$2" >"$STUB/front"
+    if [ "$background" = no ]; then echo "$2" >"$STUB/front"; fi
 fi
 exit 0
 EOF
@@ -52,6 +60,7 @@ EOF
 cat >"$WORK/bin/osascript" <<'EOF'
 #!/bin/sh
 echo "osascript quit" >>"$STUB/calls"
+echo "$*" >"$STUB/osascript_args"
 if [ "${STUB_QUIT_FAIL:-}" = 1 ]; then
     echo "execution error: Not authorized to send Apple events to Anki. (-1743)" >&2
     exit 1
@@ -66,7 +75,16 @@ if [ "$1" = front ]; then
     echo "ASN:0x0-0x1001:"
 elif [ "$1" = find ]; then
     id=${2#bundleid=}
-    if [ "$id" = net.ankiweb.dtop ]; then
+    if [ "$id" = "${STUB_ANKI_ID:-net.ankiweb.anki}" ]; then
+        if [ -f "$STUB/anki_starting" ]; then
+            left=$(cat "$STUB/anki_starting")
+            if [ "$left" -le 0 ]; then
+                rm -f "$STUB/anki_starting"
+                : >"$STUB/anki_running"
+            else
+                echo $((left - 1)) >"$STUB/anki_starting"
+            fi
+        fi
         if [ -f "$STUB/anki_running" ]; then echo "ASN:0x0-0x2002:"; else echo "[ NULL ]"; fi
     elif ! grep -qxF "$id" "$STUB/not_running" 2>/dev/null; then
         echo "ASN:0x0-0x3003:"
@@ -74,15 +92,6 @@ elif [ "$1" = find ]; then
 elif [ "$3" = pid ]; then
     echo "\"pid\"=$(cat "$STUB/anki_pid")"
 else
-    if [ -f "$STUB/front_pending" ]; then
-        left=$(cat "$STUB/front_pending")
-        if [ "$left" -le 0 ]; then
-            rm -f "$STUB/front_pending"
-            echo net.ankiweb.dtop >"$STUB/front"
-        else
-            echo $((left - 1)) >"$STUB/front_pending"
-        fi
-    fi
     printf '"CFBundleIdentifier"="%s"\n' "$(cat "$STUB/front")"
 fi
 EOF
@@ -95,7 +104,7 @@ EOF
 cat >"$WORK/bin/sleep" <<'EOF'
 #!/bin/sh
 echo "sleep $1" >>"$STUB/calls"
-# Simulates Claude finishing while Anki is still starting.
+# Simulates Claude finishing while Anki is still launching.
 if [ "$1" = 1 ] && [ "${STUB_END_TURN_DURING_WAIT:-}" = 1 ]; then
     rm -f "$CLAUDE_PLUGIN_DATA/sessions/$STUB_SID"
 fi
@@ -115,16 +124,18 @@ export PATH STUB
 
 reset() {
     rm -rf "$STUB" "$DATA" "$WORK/apps"
-    mkdir -p "$STUB" "$DATA" "$WORK/apps/Anki.app"
+    mkdir -p "$STUB" "$DATA" "$WORK/apps/Anki.app/Contents"
     : >"$STUB/calls"
     echo "$TERM_APP" >"$STUB/front"
     echo 4242 >"$STUB/anki_pid"
-    unset STUB_UNAME STUB_OPEN_FAIL STUB_QUIT_FAIL STUB_SLOW_START STUB_END_TURN_DURING_WAIT STUB_SID STUB_IDLE_MS
+    unset STUB_UNAME STUB_OPEN_FAIL STUB_QUIT_FAIL STUB_SLOW_START STUB_END_TURN_DURING_WAIT
+    unset STUB_SID STUB_IDLE_MS STUB_ANKI_ID
     unset ANKI_BREAK_DISABLE CLAUDE_PLUGIN_OPTION_DELAY_SECONDS CLAUDE_PLUGIN_OPTION_WHEN_DONE
     CLAUDE_PLUGIN_DATA=$DATA
     ANKI_BREAK_APP_DIR="$WORK/apps"
     ANKI_BREAK_SYNC=1
-    export CLAUDE_PLUGIN_DATA ANKI_BREAK_APP_DIR ANKI_BREAK_SYNC
+    __CFBundleIdentifier=$TERM_APP
+    export CLAUDE_PLUGIN_DATA ANKI_BREAK_APP_DIR ANKI_BREAK_SYNC __CFBundleIdentifier
 }
 
 # hook <action> <session_id>: run an action the way Claude Code does.
@@ -133,9 +144,13 @@ hook() {
         $TEST_SHELL "$SCRIPT" "$1" >"$WORK/stdout" 2>"$WORK/stderr"
 }
 
+token_of() {
+    sed -n 1p "$DATA/sessions/$1" 2>/dev/null
+}
+
 # open_later <session_id>: run the background step by hand (ANKI_BREAK_SYNC=skip).
 open_later() {
-    $TEST_SHELL "$SCRIPT" open-later "$1" "$(sed -n 1p "$DATA/sessions/$1")" </dev/null >/dev/null 2>&1
+    $TEST_SHELL "$SCRIPT" open-later "$1" "$(token_of "$1")" </dev/null >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------- checks
@@ -156,13 +171,18 @@ not_called() {
     check
     if grep -qxF -- "$1" "$STUB/calls"; then fail "unexpected call: $1"; fi
 }
+call_count() {
+    check
+    n=$(grep -cxF -- "$1" "$STUB/calls")
+    [ "$n" -eq "$2" ] || fail "expected $2 x '$1', got $n"
+}
 no_calls() {
     check
     [ ! -s "$STUB/calls" ] || fail "expected no calls, got: $(tr '\n' ';' <"$STUB/calls")"
 }
 has_file() {
     check
-    [ -f "$1" ] || fail "expected file $1"
+    [ -e "$1" ] || fail "expected file $1"
 }
 no_file() {
     check
@@ -171,10 +191,6 @@ no_file() {
 content() {
     check
     [ "$(cat "$1" 2>/dev/null)" = "$2" ] || fail "expected '$2' in $1, got '$(cat "$1" 2>/dev/null)'"
-}
-host_of() {
-    check
-    [ "$(sed -n 2p "$DATA/sessions/$1" 2>/dev/null)" = "$2" ] || fail "expected host '$2' for $1"
 }
 quiet() {
     check
@@ -186,60 +202,114 @@ log_has() {
     check
     grep -qF -- "$1" "$DATA/log" 2>/dev/null || fail "log lacks: $1"
 }
+wait_for_call() {
+    i=0
+    while [ "$i" -lt 50 ] && ! grep -qxF -- "$1" "$STUB/calls"; do
+        command -p sleep 0.1
+        i=$((i + 1))
+    done
+    called "$1"
+}
 
 # ---------------------------------------------------------------- tests
 
-CURRENT="opens Anki after the delay and prints nothing"
+CURRENT="launches Anki in the background, then brings it forward"
 reset
 hook start s1
 quiet
 called "sleep 15"
+called "open -g -b $ANKI"
 called "open -b $ANKI"
 content "$DATA/launched" 4242
-host_of s1 "$TERM_APP"
 no_file "$DATA/starting"
 no_file "$DATA/lock"
 
-CURRENT="stop quits the Anki it opened and brings the terminal back"
+CURRENT="stop brings the terminal back and quits the Anki it opened"
 hook stop s1
 quiet
-called "osascript quit"
 called "open -b $TERM_APP"
-no_file "$DATA/launched"
+called "osascript quit"
+check
+grep -qF "tell application id \"$ANKI\" to quit" "$STUB/osascript_args" || fail "quit script names the wrong app"
+check
+grep -qF "ignoring application responses" "$STUB/osascript_args" || fail "quit script waits for a reply"
 no_file "$DATA/sessions/s1"
 no_file "$DATA/lock"
+log_has "quit anki"
+
+CURRENT="a second stop for the same turn does nothing"
+hook stop s1
+call_count "osascript quit" 1
+
+CURRENT="older and launcher builds of Anki use their own bundle id"
+for id in net.ankiweb.dtop net.ankiweb.launcher; do
+    reset
+    STUB_ANKI_ID=$id
+    export STUB_ANKI_ID
+    hook start s1
+    called "open -g -b $id"
+    hook stop s1
+    check
+    grep -qF "tell application id \"$id\" to quit" "$STUB/osascript_args" || fail "quit for $id"
+done
 
 CURRENT="a turn shorter than the delay never opens Anki"
 reset
 ANKI_BREAK_SYNC=skip hook start s1
-token=$(sed -n 1p "$DATA/sessions/s1")
+token=$(token_of s1)
 hook stop s1
 $TEST_SHELL "$SCRIPT" open-later s1 "$token" </dev/null >/dev/null 2>&1
-not_called "open -b $ANKI"
-not_called "osascript quit"
+not_called "open -g -b $ANKI"
 
 CURRENT="a new prompt replaces the old turn"
 reset
 ANKI_BREAK_SYNC=skip hook start s1
-old=$(sed -n 1p "$DATA/sessions/s1")
+old=$(token_of s1)
 ANKI_BREAK_SYNC=skip hook start s1
 $TEST_SHELL "$SCRIPT" open-later s1 "$old" </dev/null >/dev/null 2>&1
-not_called "open -b $ANKI"
+not_called "open -g -b $ANKI"
+
+CURRENT="a new prompt during finish keeps Anki"
+reset
+hook start s1
+old=$(token_of s1)
+ANKI_BREAK_SYNC=skip hook start s1
+: >"$STUB/calls"
+$TEST_SHELL "$SCRIPT" finish s1 "$old" </dev/null >/dev/null 2>&1
+not_called "osascript quit"
+not_called "open -b $TERM_APP"
+log_has "a new prompt started in s1"
+
+CURRENT="no host app (cron, launchd, SSH): never opens Anki"
+reset
+unset __CFBundleIdentifier
+hook start s1
+quiet
+hook stop s1
+no_calls
+no_file "$DATA/sessions/s1"
 
 CURRENT="no interruption when the user moved to another app"
 reset
 ANKI_BREAK_SYNC=skip hook start s1
 echo com.google.Chrome >"$STUB/front"
 open_later s1
-not_called "open -b $ANKI"
+not_called "open -g -b $ANKI"
 log_has "user is in com.google.Chrome, not interrupting"
+
+CURRENT="no opening on the lock screen"
+reset
+ANKI_BREAK_SYNC=skip hook start s1
+echo com.apple.loginwindow >"$STUB/front"
+open_later s1
+not_called "open -g -b $ANKI"
 
 CURRENT="no opening while the user is typing"
 reset
 STUB_IDLE_MS=100
 export STUB_IDLE_MS
 hook start s1
-not_called "open -b $ANKI"
+not_called "open -g -b $ANKI"
 log_has "user kept typing"
 
 CURRENT="no focus change while the user is typing in Anki"
@@ -253,17 +323,20 @@ not_called "open -b $TERM_APP"
 has_file "$DATA/launched"
 log_has "focus left alone"
 
-CURRENT="no opening on the lock screen"
+CURRENT="another session that just stopped is not covered by Anki"
 reset
+ANKI_BREAK_SYNC=skip hook start s2
+ANKI_BREAK_SYNC=skip hook stop s2
 ANKI_BREAK_SYNC=skip hook start s1
-echo com.apple.loginwindow >"$STUB/front"
 open_later s1
-not_called "open -b $ANKI"
+not_called "open -g -b $ANKI"
+log_has "another session just stopped"
 
-CURRENT="Anki the user opened is never quit, only sent to the back"
+CURRENT="Anki the user opened is brought forward, never quit"
 reset
 : >"$STUB/anki_running"
 hook start s1
+not_called "open -g -b $ANKI"
 called "open -b $ANKI"
 no_file "$DATA/launched"
 hook stop s1
@@ -302,7 +375,6 @@ reset
 echo "$ANKI" >"$STUB/front"
 hook start s1
 not_called "open -b $ANKI"
-host_of s1 ""
 
 CURRENT="two sessions: Anki stays open until both are done"
 reset
@@ -317,31 +389,31 @@ log_has "another session is still working"
 echo "$ANKI" >"$STUB/front"
 hook stop s2
 called "osascript quit"
-called "open -b $TERM_APP"
 
-CURRENT="Claude finishes while Anki is still starting"
+CURRENT="Claude finishes while Anki is still launching"
 reset
 STUB_SLOW_START=1
 STUB_END_TURN_DURING_WAIT=1
 STUB_SID=s1
 export STUB_SLOW_START STUB_END_TURN_DURING_WAIT STUB_SID
 hook start s1
-called "open -b $ANKI"
+called "open -g -b $ANKI"
 called "sleep 1"
+not_called "open -b $ANKI"
+not_called "open -b $TERM_APP"
 called "osascript quit"
-called "open -b $TERM_APP"
 no_file "$DATA/starting"
-no_file "$DATA/launched"
 no_file "$DATA/lock"
 log_has "claude finished while anki was starting"
 
-CURRENT="a stop during the launch leaves the closing to open-later"
+CURRENT="another session's stop during a launch leaves it to open-later"
 reset
 : >"$DATA/starting"
 : >"$DATA/launched"
 : >"$STUB/anki_running"
-echo "$ANKI" >"$STUB/front"
-hook stop s1
+mkdir -p "$DATA/sessions"
+echo t2 >"$DATA/sessions/s2"
+hook stop s2
 not_called "osascript quit"
 has_file "$DATA/launched"
 
@@ -364,7 +436,7 @@ not_called "osascript quit"
 called "open -b $TERM_APP"
 no_file "$DATA/launched"
 
-CURRENT="Automation permission refused: the terminal still comes back"
+CURRENT="a refused quit is tried again next turn"
 reset
 STUB_QUIT_FAIL=1
 export STUB_QUIT_FAIL
@@ -372,7 +444,14 @@ hook start s1
 hook stop s1
 called "osascript quit"
 called "open -b $TERM_APP"
+has_file "$DATA/launched"
 log_has "quit refused (execution error: Not authorized"
+unset STUB_QUIT_FAIL
+echo "$TERM_APP" >"$STUB/front"
+: >"$STUB/calls"
+hook start s1
+hook stop s1
+called "osascript quit"
 
 CURRENT="Anki cannot be opened"
 reset
@@ -392,7 +471,6 @@ quiet
 hook stop s1
 quiet
 no_calls
-no_file "$DATA/sessions/s1"
 
 CURRENT="ANKI_BREAK_DISABLE turns it off"
 reset
@@ -459,12 +537,29 @@ touch -t "$(date -d '-3 hours' +%Y%m%d%H%M 2>/dev/null || date -v-3H +%Y%m%d%H%M
 hook stop s1
 called "osascript quit"
 
-CURRENT="a stale lock does not block forever"
+CURRENT="a lock whose owner died is broken"
+reset
+mkdir -p "$DATA/lock"
+echo 999999 >"$DATA/lock/pid"
+hook start s1
+called "open -g -b $ANKI"
+no_file "$DATA/lock"
+
+CURRENT="a lock without an owner is broken"
 reset
 mkdir -p "$DATA/lock"
 hook start s1
-called "open -b $ANKI"
+called "open -g -b $ANKI"
 no_file "$DATA/lock"
+
+CURRENT="a live lock is never broken"
+reset
+mkdir -p "$DATA/lock"
+echo $$ >"$DATA/lock/pid"
+hook start s1
+not_called "open -g -b $ANKI"
+log_has "lock busy"
+content "$DATA/lock/pid" $$
 
 CURRENT="session ids cannot escape the data folder"
 reset
@@ -486,6 +581,16 @@ hook start s1
 check
 [ "$(wc -l <"$DATA/log" | tr -d ' ')" -le 210 ] || fail "log not trimmed"
 
+CURRENT="the real background path works and the hook returns at once"
+reset
+unset ANKI_BREAK_SYNC
+hook start s1
+quiet
+wait_for_call "open -b $ANKI"
+hook stop s1
+quiet
+wait_for_call "osascript quit"
+
 CURRENT="doctor reports and changes nothing"
 reset
 CLAUDE_PLUGIN_OPTION_DELAY_SECONDS=abc
@@ -495,14 +600,13 @@ hook stop s1
 unset CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_OPTION_DELAY_SECONDS
 : >"$STUB/calls"
 $TEST_SHELL "$SCRIPT" doctor "$DATA" >"$WORK/stdout" 2>&1
-check
-grep -q "system: macOS (supported)" "$WORK/stdout" || fail "doctor system line"
+for line in "system: macOS (supported)" "anki installed: $WORK/apps/Anki.app ($ANKI)" \
+    "host app: $TERM_APP" "idle ms: 5000" "anki opened by anki-break: no" "Automation"; do
+    check
+    grep -qF "$line" "$WORK/stdout" || fail "doctor lacks: $line"
+done
 check
 grep -q "last prompt: .*delay_seconds=15 when_done=quit" "$WORK/stdout" || fail "doctor settings line"
-check
-grep -q "anki installed: $WORK/apps/Anki.app" "$WORK/stdout" || fail "doctor anki line"
-check
-grep -q "Automation" "$WORK/stdout" || fail "doctor permission hint"
 not_called "open -b $ANKI"
 not_called "osascript quit"
 STUB_UNAME=Linux

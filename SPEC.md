@@ -34,7 +34,13 @@ No agents, MCP servers or other skills.
 | `PreToolUse` matching `AskUserQuestion\|ExitPlanMode` | `stop` | Claude is about to ask the user something |
 | `SessionEnd` | `stop` | The session is gone |
 
-`UserPromptSubmit` also fires for `claude -p`, `/loop` and scheduled runs. The host-app rule below keeps Anki from opening when the user is not at the app that sent the prompt. `ANKI_BREAK_DISABLE=1` turns the plugin off for scripted runs.
+`UserPromptSubmit` also fires for `claude -p`, `/loop` and scheduled runs. The host-app rules below keep Anki from opening for runs without a terminal or editor behind them, and when the user is in another app. `ANKI_BREAK_DISABLE=1` turns the plugin off entirely.
+
+## Anki and the host app
+
+Anki's bundle id changed over time: `net.ankiweb.dtop` up to 25.06, `net.ankiweb.launcher` for the 25.07 to 25.09 launcher builds, and `net.ankiweb.anki` from 26.05 (Briefcase builds). The script finds `Anki.app` (Applications folders, then Spotlight for any of the three ids) and reads the id from its `Info.plist`. The launcher builds start Anki as a second process, so focus handling there may be less reliable. That is untested.
+
+The host app is the app Claude Code runs in, taken from `__CFBundleIdentifier`, which macOS passes to the shells of Terminal, iTerm, VS Code and other apps. Cron jobs, launchd jobs and SSH sessions do not have it, so Anki never opens for them.
 
 ## Behaviour
 
@@ -43,29 +49,31 @@ Every hook returns at once and prints nothing: stdout of a `UserPromptSubmit` ho
 **Focus rule.** Focus only moves after at least 1.5 seconds without keyboard or mouse input (HIDIdleTime from `ioreg`, no permission needed). Moving focus while the user types sends the keys to the wrong window: grading cards in Anki, or answering a Claude dialog. If the user keeps typing for 60 seconds, Anki-Break leaves the focus alone.
 
 **start**
-1. Exit at once unless `CLAUDE_PLUGIN_DATA` is set, `ANKI_BREAK_DISABLE` is unset, the system is macOS and Anki is installed.
-2. Write this session's working mark: a new turn token, and the host app (the frontmost app, unless it is Anki or the lock screen).
+1. Exit at once unless `CLAUDE_PLUGIN_DATA` is set, `ANKI_BREAK_DISABLE` is unset, the system is macOS, Anki is installed and there is a host app.
+2. Write this session's working mark with a new turn token.
 3. Start `open-later` in the background.
 
 **open-later** (background)
 1. Wait `delay_seconds`. Stop if the turn token has changed or is gone.
-2. Wait for the focus rule. If the user keeps typing, skip this turn.
-3. Under the lock: stop if the turn is over, if Anki or the lock screen is in front, or if the frontmost app is not the host app (the user moved on to something else). Note whether Anki-Break is launching Anki (`launched`), and mark the launch as in progress (`starting`).
-4. Open Anki (`open -b net.ankiweb.dtop`) and wait up to 20 seconds for it to reach the front. Save the pid of an Anki that Anki-Break launched.
-5. Under the lock: clear `starting`. If the turn ended during the launch, run `finish` now.
+2. Stop if another session stopped in the last 60 seconds: it may be waiting for the user, and Anki should not cover it.
+3. Wait for the focus rule. If the user keeps typing, skip this turn.
+4. Under the lock: stop if the turn is over, if Anki is already in front, or if the frontmost app is not the host app (the user moved on, or the screen is locked). Forget a launch whose Anki is gone. If Anki is not running, note that Anki-Break launches it (`launched`) and that a launch is in progress (`starting`).
+5. A running Anki is brought forward at once (`open -b`). A new one is launched without activating it (`open -g -b`), so a slow start never takes the keyboard. Wait up to 30 seconds for it to run, save its pid in `launched`, and wait for the focus rule again.
+6. Under the lock: clear `starting`. If the turn ended during the launch, run `finish` for this turn. Otherwise, if the user is idle and still in the host app, bring Anki forward.
 
 **stop**
-1. Read the host app from this session's working mark, then remove the mark.
-2. Start `finish` in the background.
+1. Read this session's turn token, then remove the mark. Without a token (a turn Anki-Break did not start, or a second stop for the same turn) do nothing more.
+2. Record the time of this stop in `stops/<session_id>`.
+3. Start `finish` for this session and token in the background.
 
 **finish** (background)
 1. If a launch is in progress, leave everything to `open-later`.
-2. If Anki is not in front and Anki-Break did not launch it, there is nothing to do.
+2. Forget a launch whose Anki is gone. If Anki is not in front and Anki-Break did not launch it, there is nothing to do.
 3. Wait for the focus rule.
-4. Under the lock:
-   - If no other session is working (marks younger than 2 hours) and Anki-Break launched Anki: quit it when `when_done` is `quit`, the user is idle and Anki's pid still matches. Forget the launch, unless the user was still typing.
-   - If another session is still working, Anki stays open.
-   - If Anki is in front and the user is idle, bring the host app back, but only if it is still running.
+4. Under the lock: stop if a launch started meanwhile, or if this session already started a newer turn (a queued prompt). If no other session is working (marks younger than 2 hours) and Anki-Break launched Anki, plan to quit it when `when_done` is `quit` and the user is idle. With `keep`, forget the launch. If another session is still working, Anki stays open.
+5. After the lock: if Anki is in front and the user is idle, bring the host app back, if it is still running. Then send the quit.
+
+The `launched` flag stays until that Anki process is gone, so a refused or slow quit is tried again on the next turn.
 
 Anki that the user opened themselves is never quit, only sent to the back.
 
@@ -85,17 +93,19 @@ The script reads them from `CLAUDE_PLUGIN_OPTION_DELAY_SECONDS` and `CLAUDE_PLUG
 
 All state lives in `${CLAUDE_PLUGIN_DATA}`. Without it, the hooks do nothing.
 
-- `sessions/<session_id>`: turn token and host app while that session is working
-- `launched`: present while an Anki that Anki-Break opened is running, holds its pid
+- `sessions/<session_id>`: the turn token while that session is working
+- `stops/<session_id>`: the time of that session's last stop
+- `launched`: present while an Anki that Anki-Break opened may still run, holds its pid
 - `starting`: present while a launch is in progress
-- `lock`: the lock directory
+- `lock/pid`: the lock directory and its owner's pid
 - `log`: one line per action, trimmed to the last 200 lines when it passes 400
 
-Working marks older than 2 hours are ignored. Files in `sessions/` older than 24 hours are deleted on each `start`. A lock older than about 15 seconds is broken. Nothing is written anywhere else.
+Working marks older than 2 hours are ignored. Files in `sessions/` and `stops/` older than 24 hours are deleted on each `start`. The lock is broken only when its owner process is gone (or never wrote its pid), and a waiter gives up after two minutes. Nothing is written anywhere else.
 
 ## macOS commands used
 
-- `open -b <bundle id>`: open or activate Anki, bring the host app back.
+- `open -g -b <id>`: launch Anki without activating it. `open -b <id>`: bring Anki or the host app forward.
+- `defaults read <Anki.app>/Contents/Info CFBundleIdentifier`: Anki's bundle id.
 - `lsappinfo`: frontmost app, whether an app is running, Anki's pid. No permission needed.
 - `ioreg -c IOHIDSystem`: time since the last input. No permission needed.
 - `mdfind`: find Anki outside the Applications folders.
@@ -113,4 +123,4 @@ Working marks older than 2 hours are ignored. Files in `sessions/` older than 24
 
 ## Tests
 
-`tests/run.sh` runs every action against stub `uname`, `open`, `osascript`, `lsappinfo`, `ioreg`, `sleep` and `mdfind` commands, and checks the calls made and the state left behind. It runs under `sh`, `dash` and `bash --posix`, and on macOS in CI. Nothing has been tested with a real Anki yet.
+`tests/run.sh` runs every action against stub `uname`, `defaults`, `open`, `osascript`, `lsappinfo`, `ioreg`, `sleep` and `mdfind` commands, including one run through the real detached background path, and checks the calls made and the state left behind. It runs under `sh`, `dash` and `bash --posix`, and on macOS in CI. Nothing has been tested with a real Anki yet.

@@ -23,10 +23,11 @@ Then tell the user, in a few short lines, what the output means and what to do. 
 |---|---|
 | `system:` is not macOS | Anki-Break only works when Claude Code runs on the same Mac as Anki. Cloud sessions and other systems are skipped on purpose. |
 | `anki installed: no` | Install Anki desktop from apps.ankiweb.net into the Applications folder. |
+| `host app: none` | Claude Code was not started from a terminal or editor app (for example over SSH or from a scheduled job). Anki-Break only works when Claude Code runs in an app on this Mac. |
 | `disabled: yes` | `ANKI_BREAK_DISABLE` is set in the environment Claude Code was started from. Unset it and restart Claude Code. |
-| `settings at the last prompt: no prompt seen yet` | The hooks have not run. Run `/reload-plugins` or start a new session, and check `/plugin` for errors. |
-| The log shows `start` lines but never `opened anki` | Claude finished before the delay ran out. Lower `delay_seconds` in `/config`, or give Claude a longer task to test. |
+| `last prompt: no prompt seen yet` | The hooks have not run. Run `/reload-plugins` or start a new session, and check `/plugin` for errors. |
+| The log shows `start` lines but never `opened anki` | Claude finished before the delay ran out, the user was typing or in another app, or another session had just stopped. The log names the reason. Lower `delay_seconds` in `/config`, or give Claude a longer task to test. |
 | The log shows `quit refused` | macOS blocked the quit. Open System Settings, Privacy and Security, Automation, and allow your terminal app to control Anki. Until then Anki stays open in the background. |
-| `working sessions` is above 0 while nothing runs | A session ended without a stop. The mark is ignored after 6 hours and deleted after 24. |
+| `working sessions` is above 0 while nothing runs | A session ended without a stop. The mark is ignored after 2 hours and deleted after 24. |
 
 Do not change any files or settings yourself. If nothing in the table fits, show the last log lines and suggest opening an issue at https://github.com/JasperMeijerink/anki-break/issues.

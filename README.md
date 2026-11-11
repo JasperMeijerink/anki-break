@@ -15,12 +15,13 @@ Agents make you wait: twenty seconds here, three minutes there. That is the perf
 - Quick answers never open Anki at all.
 - An Anki you opened yourself is never quit, only sent to the back.
 - Focus only moves after 1.5 seconds without typing, so your keys never land in the wrong window.
-- With several Claude sessions, Anki stays open until the last one is done. A session that needs you still brings its terminal back.
+- With several Claude sessions, Anki stays open until the last one is done. A session that needs you still brings its terminal back, and Anki does not open over a session that stopped in the last minute.
+- Runs without a terminal or editor behind them, such as cron jobs or SSH sessions, never open Anki.
 
 ## Requirements
 
 - macOS, with Claude Code running on the same Mac: in a terminal, an IDE, or the Code tab of the Claude desktop app. It does nothing in cloud sessions or on other systems, and it cannot work on iOS.
-- Anki desktop from [apps.ankiweb.net](https://apps.ankiweb.net), in Applications or anywhere Spotlight can find it.
+- Anki desktop from [apps.ankiweb.net](https://apps.ankiweb.net), in Applications or anywhere Spotlight can find it. Current releases (26.x) and releases up to 25.06 are supported. The 25.07 to 25.09 launcher builds should work but are untested.
 - No Anki add-ons. AnkiConnect is not needed.
 
 ## Install
@@ -58,7 +59,7 @@ Change these in `/config`, under the plugin's options:
 | `delay_seconds` | `15` | How long Claude must be working before Anki opens, from 0 to 600. |
 | `when_done` | `quit` | `quit` closes Anki when Claude is done, if Anki-Break opened it. `keep` leaves Anki running in the background, which avoids a cold start and a sync every turn. |
 
-To turn Anki-Break off for one Claude Code process, start it with `ANKI_BREAK_DISABLE=1 claude`. That is useful for scripts and `claude -p`.
+To turn Anki-Break off for one Claude Code process, start it with `ANKI_BREAK_DISABLE=1 claude`. Scheduled and cron runs are already skipped, but this also covers `claude -p` started from a terminal.
 
 ## Command
 
@@ -75,7 +76,7 @@ To turn Anki-Break off for one Claude Code process, start it with `ANKI_BREAK_DI
 
 ## What it runs and stores
 
-- It runs a POSIX shell script on Claude Code's hook events, plus the macOS commands `open`, `lsappinfo`, `ioreg`, `mdfind` and, only to quit Anki, `osascript`.
+- It runs a POSIX shell script on Claude Code's hook events, plus the macOS commands `open`, `lsappinfo`, `ioreg`, `mdfind`, `defaults` and, only to quit Anki, `osascript`.
 - It stores a few small state files and a short log in the plugin's data folder. Session files are deleted after 24 hours, and the log keeps its last 200 to 400 lines. Claude Code deletes the folder when you uninstall the plugin.
 - It makes no network connections and never reads your Anki collection. See [PRIVACY.md](PRIVACY.md).
 
@@ -83,7 +84,7 @@ To turn Anki-Break off for one Claude Code process, start it with `ANKI_BREAK_DI
 
 Run `/anki-break:doctor` first. Common causes:
 
-**Anki never opens.** Claude finished before the delay ran out, you were typing, you were in another app, or Claude Code is not running on your Mac. Lower `delay_seconds` to try it out.
+**Anki never opens.** Claude finished before the delay ran out, you were typing, you were in another app, or Claude Code is not running on your Mac. The doctor's "host app" line must name your terminal or editor. Lower `delay_seconds` to try it out.
 
 **Anki does not quit.** Check the Automation permission above. Anki-Break also leaves Anki open when you opened it yourself, when `when_done` is `keep`, or when you kept typing for a minute after Claude finished.
 

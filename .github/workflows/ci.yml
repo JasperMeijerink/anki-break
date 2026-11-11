@@ -45,6 +45,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/anki-break"
           sh scripts/anki-break.sh doctor "$RUNNER_TEMP/anki-break" | tee doctor.txt
           grep -q "system: macOS (supported)" doctor.txt
+          grep -Eq "^idle ms: [0-9]+$" doctor.txt
       - name: Show the real output formats the script parses
         continue-on-error: true
         run: |
