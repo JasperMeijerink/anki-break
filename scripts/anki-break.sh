@@ -10,7 +10,7 @@
 # Internal actions, run in the background: open-later, finish.
 # Hook events pass JSON on stdin. See SPEC.md for the full behaviour.
 
-DEFAULT_DELAY=15
+DEFAULT_DELAY=10
 MAX_DELAY=600
 IDLE_MS=1500           # focus only moves after this much keyboard and mouse quiet
 IDLE_WAIT=60           # seconds to wait for that quiet before giving up

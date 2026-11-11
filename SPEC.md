@@ -96,7 +96,7 @@ Prints the system, whether Anki is installed and running, the settings logged at
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `delay_seconds` | number, 0 to 600 | 15 | How long Claude must be working before Anki opens. Short answers then never open Anki. |
+| `delay_seconds` | number, 0 to 600 | 10 | How long Claude must be working before Anki opens. Short answers then never open Anki. |
 | `when_done` | string | `keep` | `keep`: switch back to the host app and leave Anki running in the background, so it opens at once next time, with no cold start or sync each turn. `quit`: also close Anki, if Anki-Break opened it. |
 
 The script reads them from `CLAUDE_PLUGIN_OPTION_DELAY_SECONDS` and `CLAUDE_PLUGIN_OPTION_WHEN_DONE`, validates them and falls back to the defaults on anything else. No `options` list, per the directory rules. `ANKI_BREAK_DISABLE=1` in the environment turns the plugin off for that Claude Code process.

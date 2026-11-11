@@ -1,6 +1,6 @@
 # Anki-Break
 
-Turn waiting for Claude into flashcard time. Anki-Break is a Claude Code plugin for macOS: when Claude has been working for 15 seconds, Anki opens. When Claude is done or needs you, you are switched back to your terminal, and Anki waits in the background for the next turn.
+Turn waiting for Claude into flashcard time. Anki-Break is a Claude Code plugin for macOS: when Claude has been working for 10 seconds, Anki opens. When Claude is done or needs you, you are switched back to your terminal, and Anki waits in the background for the next turn.
 
 Anki-Break is not affiliated with or endorsed by Anki or Ankitects.
 
@@ -10,7 +10,7 @@ Agents make you wait: twenty seconds here, three minutes there. That is the perf
 
 ## How it works
 
-- You send a prompt. If Claude is still working after the delay (15 seconds by default), Anki opens, as long as you are not typing and are still in the app you prompted from.
+- You send a prompt. If Claude is still working after the delay (10 seconds by default), Anki opens, as long as you are not typing and are still in the app you prompted from.
 - Claude finishes, asks you something or needs permission. As soon as you pause, your terminal comes back to the front. Anki stays open in the background, ready for the next turn. Anki-Break can also quit Anki instead (see Settings).
 - Quick answers never open Anki at all.
 - An Anki you opened yourself is never quit, only sent to the back.
@@ -56,7 +56,7 @@ Change these in `/config`, under the plugin's options:
 
 | Setting | Default | What it does |
 |---|---|---|
-| `delay_seconds` | `15` | How long Claude must be working before Anki opens, from 0 to 600. |
+| `delay_seconds` | `10` | How long Claude must be working before Anki opens, from 0 to 600. |
 | `when_done` | `keep` | `keep` switches back to your terminal and leaves Anki running in the background, so it is there at once next time. `quit` also closes Anki when Claude is done, if Anki-Break opened it. |
 
 To pause it in one chat, use `/anki-break:pause` (see Commands). To turn it off for a whole Claude Code process, start it with `ANKI_BREAK_DISABLE=1 claude`. Scheduled and cron runs are already skipped, but this also covers `claude -p` started from a terminal.
@@ -74,7 +74,7 @@ Only you can run these. Claude cannot pause or resume Anki-Break on its own.
 
 ## Examples
 
-1. You ask Claude to refactor a module. After 15 seconds Anki opens and you do a few reviews. Claude finishes, you pause, and your terminal is back in front, with Anki waiting behind it.
+1. You ask Claude to refactor a module. After 10 seconds Anki opens and you do a few reviews. Claude finishes, you pause, and your terminal is back in front, with Anki waiting behind it.
 2. You ask a quick question and Claude answers in five seconds. Anki never opens.
 3. Halfway through a task, Claude asks permission to run the tests. Anki goes away so you can answer. It opens again after your next prompt.
 4. You were reading docs in your browser while Claude worked. Anki does not interrupt you.
