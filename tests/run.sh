@@ -1,7 +1,9 @@
 #!/bin/sh
 # Tests for scripts/anki-break.sh.
 #
-#   sh tests/run.sh        (also: dash tests/run.sh, bash --posix tests/run.sh)
+#   sh tests/run.sh
+#   TEST_SHELL=dash dash tests/run.sh
+#   TEST_SHELL="bash --posix" bash --posix tests/run.sh
 #
 # Every macOS command the script uses is replaced by a stub that records its
 # calls in $STUB/calls, so the tests run anywhere. TEST_SHELL picks the shell
@@ -232,7 +234,7 @@ CURRENT="launches Anki in the background, then brings it forward"
 reset
 hook start s1
 quiet
-called "sleep 15"
+called "sleep 10"
 called "open -g -b $ANKI"
 called "open -b $ANKI"
 content "$DATA/launched" 4242
@@ -524,7 +526,7 @@ no_file "$DATA/sessions/s1"
 CURRENT="delay setting is validated"
 # A literal, unsubstituted ${user_config...} must fall back to the default.
 # shellcheck disable=SC2016
-for pair in "abc:15" "0:0" "45:45" "12.5:12" "9999:600" "99999999999999:15" "-5:15" '${user_config.delay_seconds}:15'; do
+for pair in "abc:10" "0:0" "45:45" "12.5:12" "9999:600" "99999999999999:10" "-5:10" '${user_config.delay_seconds}:10'; do
     reset
     CLAUDE_PLUGIN_OPTION_DELAY_SECONDS=${pair%:*}
     export CLAUDE_PLUGIN_OPTION_DELAY_SECONDS
@@ -743,7 +745,7 @@ for line in "system: macOS (supported)" "anki installed: $WORK/apps/Anki.app ($A
     grep -qF "$line" "$WORK/stdout" || fail "doctor lacks: $line"
 done
 check
-grep -q "last prompt: .*delay_seconds=15 when_done=quit" "$WORK/stdout" || fail "doctor settings line"
+grep -q "last prompt: .*delay_seconds=10 when_done=quit" "$WORK/stdout" || fail "doctor settings line"
 not_called "open -b $ANKI"
 not_called "osascript quit"
 STUB_UNAME=Linux

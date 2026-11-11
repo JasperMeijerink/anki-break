@@ -8,7 +8,7 @@ Turn the time spent waiting for Claude into flashcard reviews. When Claude has b
 
 ## Platform
 
-- macOS only in v1. Claude Code must run on the same Mac as Anki desktop: the terminal, an IDE or the desktop app's Code tab.
+- macOS only. Claude Code must run on the same Mac as Anki desktop: the terminal, an IDE or the desktop app's Code tab.
 - On any other system, and in cloud sessions, every hook exits at once and does nothing.
 - iOS is out of scope: Claude Code does not run there, and iOS apps cannot open and close each other.
 
@@ -96,7 +96,7 @@ Prints the system, whether Anki is installed and running, the settings logged at
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `delay_seconds` | number, 0 to 600 | 15 | How long Claude must be working before Anki opens. Short answers then never open Anki. |
+| `delay_seconds` | number, 0 to 600 | 10 | How long Claude must be working before Anki opens. Short answers then never open Anki. |
 | `when_done` | string | `keep` | `keep`: switch back to the host app and leave Anki running in the background, so it opens at once next time, with no cold start or sync each turn. `quit`: also close Anki, if Anki-Break opened it. |
 
 The script reads them from `CLAUDE_PLUGIN_OPTION_DELAY_SECONDS` and `CLAUDE_PLUGIN_OPTION_WHEN_DONE`, validates them and falls back to the defaults on anything else. No `options` list, per the directory rules. `ANKI_BREAK_DISABLE=1` in the environment turns the plugin off for that Claude Code process.
@@ -128,12 +128,12 @@ Working marks older than 2 hours are ignored. Files in `sessions/` and `stops/` 
 
 - Reopening Anki after the user answers a permission prompt mid-turn. It reopens on the next prompt.
 - Showing cards inside Claude Code (other plugins do that through AnkiConnect).
-- Windows and Linux in v1.
+- Windows and Linux.
 
 ## Name
 
-"Anki" is a trademark of Ankitects. The README says the plugin is not affiliated with Anki, and the icon is original. The name may change before a directory submission.
+"Anki" is a trademark of Ankitects. The README says the plugin is not affiliated with Anki, and the icon is original.
 
 ## Tests
 
-`tests/run.sh` runs every action against stub `uname`, `defaults`, `open`, `osascript`, `lsappinfo`, `ioreg`, `sleep` and `mdfind` commands, including one run through the real detached background path, and checks the calls made and the state left behind. It runs under `sh`, `dash` and `bash --posix`, and on macOS in CI. Nothing has been tested with a real Anki yet.
+`tests/run.sh` runs every action against stub `uname`, `defaults`, `open`, `osascript`, `lsappinfo`, `ioreg`, `sleep` and `mdfind` commands, including one run through the real detached background path, and checks the calls made and the state left behind. It runs under `sh`, `dash` and `bash --posix`, and on macOS in CI. Releases are also checked by hand on a real Mac (see CONTRIBUTING.md).
