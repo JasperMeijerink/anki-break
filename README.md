@@ -1,6 +1,6 @@
 # Anki-Break
 
-Turn waiting for Claude into flashcard time. Anki-Break is a Claude Code plugin for macOS: when Claude has been working for 15 seconds, Anki opens. When Claude is done or needs you, Anki closes and you are back in your terminal.
+Turn waiting for Claude into flashcard time. Anki-Break is a Claude Code plugin for macOS: when Claude has been working for 15 seconds, Anki opens. When Claude is done or needs you, you are switched back to your terminal, and Anki waits in the background for the next turn.
 
 Anki-Break is not affiliated with or endorsed by Anki or Ankitects.
 
@@ -11,7 +11,7 @@ Agents make you wait: twenty seconds here, three minutes there. That is the perf
 ## How it works
 
 - You send a prompt. If Claude is still working after the delay (15 seconds by default), Anki opens, as long as you are not typing and are still in the app you prompted from.
-- Claude finishes, asks you something or needs permission. As soon as you pause, Anki quits (if Anki-Break opened it) and your terminal comes back.
+- Claude finishes, asks you something or needs permission. As soon as you pause, your terminal comes back to the front. Anki stays open in the background, ready for the next turn. Anki-Break can also quit Anki instead (see Settings).
 - Quick answers never open Anki at all.
 - An Anki you opened yourself is never quit, only sent to the back.
 - Focus only moves after 1.5 seconds without typing, so your keys never land in the wrong window.
@@ -46,9 +46,9 @@ In the Claude desktop app, open **Customize > Plugins**, add the marketplace `Ja
 
 Start a new session, or run `/reload-plugins`, after installing.
 
-### One macOS permission
+### Quitting Anki needs one macOS permission
 
-The first time Anki-Break quits Anki, macOS asks whether your terminal app (Terminal, iTerm, VS Code, ...) may control Anki. Click **OK**. If you click **Don't Allow**, Anki stays open in the background after each turn. You can allow it later in **System Settings > Privacy & Security > Automation**.
+By default Anki-Break only switches windows, which needs no permission. If you set `when_done` to `quit`, then the first time Anki-Break quits Anki, macOS asks whether your terminal app (Terminal, iTerm, VS Code, ...) may control Anki. Click **OK**. If you click **Don't Allow**, Anki stays open in the background after each turn. You can allow it later in **System Settings > Privacy & Security > Automation**.
 
 ## Settings
 
@@ -57,7 +57,7 @@ Change these in `/config`, under the plugin's options:
 | Setting | Default | What it does |
 |---|---|---|
 | `delay_seconds` | `15` | How long Claude must be working before Anki opens, from 0 to 600. |
-| `when_done` | `quit` | `quit` closes Anki when Claude is done, if Anki-Break opened it. `keep` leaves Anki running in the background, which avoids a cold start and a sync every turn. |
+| `when_done` | `keep` | `keep` switches back to your terminal and leaves Anki running in the background, so it is there at once next time. `quit` also closes Anki when Claude is done, if Anki-Break opened it. |
 
 To turn Anki-Break off for one Claude Code process, start it with `ANKI_BREAK_DISABLE=1 claude`. Scheduled and cron runs are already skipped, but this also covers `claude -p` started from a terminal.
 
@@ -67,7 +67,7 @@ To turn Anki-Break off for one Claude Code process, start it with `ANKI_BREAK_DI
 
 ## Examples
 
-1. You ask Claude to refactor a module. After 15 seconds Anki opens and you do a few reviews. Claude finishes, you pause, Anki quits and your terminal is back.
+1. You ask Claude to refactor a module. After 15 seconds Anki opens and you do a few reviews. Claude finishes, you pause, and your terminal is back in front, with Anki waiting behind it.
 2. You ask a quick question and Claude answers in five seconds. Anki never opens.
 3. Halfway through a task, Claude asks permission to run the tests. Anki goes away so you can answer. It opens again after your next prompt.
 4. You were reading docs in your browser while Claude worked. Anki does not interrupt you.
@@ -76,7 +76,7 @@ To turn Anki-Break off for one Claude Code process, start it with `ANKI_BREAK_DI
 
 ## What it runs and stores
 
-- It runs a POSIX shell script on Claude Code's hook events, plus the macOS commands `open`, `lsappinfo`, `ioreg`, `mdfind`, `defaults` and, only to quit Anki, `osascript`.
+- It runs a POSIX shell script on Claude Code's hook events, plus the macOS commands `open`, `lsappinfo`, `ioreg`, `mdfind`, `defaults` and, only when `when_done` is `quit`, `osascript`.
 - It stores a few small state files and a short log in the plugin's data folder. Session files are deleted after 24 hours, and the log keeps its last 200 to 400 lines. Claude Code deletes the folder when you uninstall the plugin.
 - It makes no network connections and never reads your Anki collection. See [PRIVACY.md](PRIVACY.md).
 
@@ -86,9 +86,9 @@ Run `/anki-break:doctor` first. Common causes:
 
 **Anki never opens.** Claude finished before the delay ran out, you were typing, you were in another app, or Claude Code is not running on your Mac. The doctor's "host app" line must name your terminal or editor. Lower `delay_seconds` to try it out.
 
-**Anki does not quit.** Check the Automation permission above. Anki-Break also leaves Anki open when you opened it yourself, when `when_done` is `keep`, or when you kept typing for a minute after Claude finished.
+**Anki does not quit.** That is the default: `when_done` is `keep`. With `quit`, check the Automation permission above. Anki-Break also leaves an Anki you opened yourself open, and does nothing while you keep typing.
 
-**Every quit triggers a sync.** That is Anki's "sync on close" setting. Set `when_done` to `keep` to avoid it.
+**Every quit triggers a sync.** With `when_done` set to `quit`, that is Anki's "sync on close" setting. The default, `keep`, avoids it.
 
 **Anki opened while I was typing.** It should wait for a pause of 1.5 seconds. Please open an issue with the doctor output.
 

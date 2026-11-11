@@ -11,7 +11,7 @@ A POSIX shell script, `scripts/anki-break.sh`, runs on your Mac when Claude Code
 - `ioreg`, to see how long ago you last typed or moved the mouse (only the time, never what you typed)
 - `mdfind`, to find Anki when it is not in the Applications folder
 - `defaults`, to read Anki's bundle id from the app
-- `osascript`, only to send Anki the standard quit command
+- `osascript`, only to send Anki the standard quit command, and only when `when_done` is set to `quit`
 
 ## What it stores
 

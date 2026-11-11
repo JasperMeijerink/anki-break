@@ -9,7 +9,7 @@
     {
       "name": "anki-break",
       "source": "./",
-      "description": "Turns waiting for Claude into flashcard time. On macOS, Anki opens when Claude has been working for a few seconds and closes again when Claude is done or needs you."
+      "description": "Turns waiting for Claude into flashcard time. On macOS, Anki opens when Claude has been working for a few seconds, and you switch back to Claude when it is done or needs you."
     }
   ]
 }

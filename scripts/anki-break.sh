@@ -42,10 +42,10 @@ delay_seconds() {
 
 when_done() {
     value=$(printf '%s' "${CLAUDE_PLUGIN_OPTION_WHEN_DONE:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-    if [ "$value" = keep ]; then
-        echo keep
-    else
+    if [ "$value" = quit ]; then
         echo quit
+    else
+        echo keep
     fi
 }
 
@@ -494,7 +494,7 @@ do_doctor() {
     fi
     echo "last log lines:"
     if [ -f "$DATA/log" ]; then tail -n 10 "$DATA/log"; else echo "(none yet)"; fi
-    echo "quitting Anki needs macOS Automation permission for your terminal app:"
+    echo "with when_done=quit, quitting Anki needs macOS Automation permission for your terminal app:"
     echo "System Settings, Privacy and Security, Automation."
 }
 
