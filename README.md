@@ -59,11 +59,18 @@ Change these in `/config`, under the plugin's options:
 | `delay_seconds` | `15` | How long Claude must be working before Anki opens, from 0 to 600. |
 | `when_done` | `keep` | `keep` switches back to your terminal and leaves Anki running in the background, so it is there at once next time. `quit` also closes Anki when Claude is done, if Anki-Break opened it. |
 
-To turn Anki-Break off for one Claude Code process, start it with `ANKI_BREAK_DISABLE=1 claude`. Scheduled and cron runs are already skipped, but this also covers `claude -p` started from a terminal.
+To pause it in one chat, use `/anki-break:pause` (see Commands). To turn it off for a whole Claude Code process, start it with `ANKI_BREAK_DISABLE=1 claude`. Scheduled and cron runs are already skipped, but this also covers `claude -p` started from a terminal.
 
-## Command
+## Commands
 
-`/anki-break:doctor` checks why Anki does or does not open. It shows whether Anki is found, the settings at your last prompt, working sessions and the recent log, and explains what to do.
+| Command | What it does |
+|---|---|
+| `/anki-break:pause` | Pauses Anki-Break in this chat until you resume it or the chat ends (closing Claude Code counts as ending it). Other chats keep working. |
+| `/anki-break:pause 30m` | Pauses it in this chat for a set time, from one minute up to 24 hours (`30`, `30m`, `2h`). |
+| `/anki-break:resume` | Turns it back on in this chat. |
+| `/anki-break:doctor` | Checks why Anki does or does not open: whether Anki is found, the settings at your last prompt, whether this chat is paused, and the recent log. |
+
+Only you can run these. Claude cannot pause or resume Anki-Break on its own.
 
 ## Examples
 

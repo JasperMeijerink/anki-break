@@ -19,6 +19,7 @@ In the plugin's data folder, which Claude Code deletes when you uninstall the pl
 
 - one small file per working Claude session, holding a turn token made of the time and a process id, deleted when the turn ends or after 24 hours at the latest
 - one small file per session with the time of its last stop, deleted after 24 hours
+- while a chat is paused, one small file with the end of the pause, deleted when the pause or the chat ends (after 7 days at the latest)
 - a flag with Anki's process id while an Anki that Anki-Break opened is running
 - a log of its own actions, trimmed to the last 200 lines whenever it passes 400
 

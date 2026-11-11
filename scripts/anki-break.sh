@@ -3,7 +3,9 @@
 #
 #   anki-break.sh start            UserPromptSubmit: mark the session as working
 #   anki-break.sh stop             Stop and friends: unmark it, send Anki away
-#   anki-break.sh doctor [folder]  print a diagnosis, change nothing
+#   anki-break.sh pause <folder> <session> [duration]   pause in one chat
+#   anki-break.sh resume <folder> <session>             resume in one chat
+#   anki-break.sh doctor [folder] [session]             diagnose, change nothing
 #
 # Internal actions, run in the background: open-later, finish.
 # Hook events pass JSON on stdin. See SPEC.md for the full behaviour.
@@ -16,12 +18,16 @@ LAUNCH_WAIT=30         # seconds to wait for a launching Anki to run
 QUIET_SECONDS=60       # after another session stops, Anki stays closed this long
 ACTIVE_MINUTES=120     # working marks older than this are ignored
 CLEANUP_MINUTES=1440   # session and stop files older than this are deleted
+PAUSE_CLEANUP=10080    # pause files of chats that never ended are deleted after 7 days
+MAX_PAUSE=1440         # longest timed pause, in minutes
 LOG_LINES=200
 
 SELF=$0
 DATA=${CLAUDE_PLUGIN_DATA:-}
 SESSIONS="$DATA/sessions"
 STOPS="$DATA/stops"
+PAUSED="$DATA/paused"
+INPUT=""
 ANKI_PATH=""
 ANKI_ID=""
 
@@ -195,15 +201,91 @@ unlock() {
     fi
 }
 
-session_from_stdin() {
-    input=""
+use_folder() {
+    DATA=$1
+    SESSIONS="$DATA/sessions"
+    STOPS="$DATA/stops"
+    PAUSED="$DATA/paused"
+}
+
+read_input() {
     if [ ! -t 0 ]; then
-        input=$(cat)
+        INPUT=$(cat)
     fi
-    sid=$(printf '%s\n' "$input" |
-        sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]\{1,128\}\)".*/\1/p' |
-        head -n 1)
-    printf '%s\n' "${sid:-default}"
+}
+
+# A string field of the hook's JSON input, limited to safe characters.
+json_field() {
+    printf '%s\n' "$INPUT" |
+        sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([A-Za-z0-9_-]\{1,128\}\)\".*/\1/p" |
+        head -n 1
+}
+
+valid_session() {
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_-]{1,128}$'
+}
+
+# A pause file holds the end time in epoch seconds, or 0 for "until resumed".
+is_paused() {
+    file="$PAUSED/$1"
+    [ -f "$file" ] || return 1
+    ends=$(cat "$file" 2>/dev/null)
+    case $ends in
+        '' | *[!0-9]*)
+            rm -f "$file"
+            return 1
+            ;;
+    esac
+    if [ "$ends" -eq 0 ] || [ "$(date +%s)" -lt "$ends" ]; then
+        return 0
+    fi
+    rm -f "$file"
+    return 1
+}
+
+# Minutes from "30", "30m" or "2h", between 1 and MAX_PAUSE.
+duration_minutes() {
+    value=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d ' ' | sed 's/^0*\([0-9]\)/\1/')
+    if printf '%s' "$value" | grep -Eq '^[0-9]{1,4}m?$'; then
+        minutes=${value%m}
+    elif printf '%s' "$value" | grep -Eq '^[0-9]{1,2}h$'; then
+        minutes=$((${value%h} * 60))
+    else
+        return 1
+    fi
+    if [ "$minutes" -lt 1 ] || [ "$minutes" -gt "$MAX_PAUSE" ]; then
+        return 1
+    fi
+    printf '%s\n' "$minutes"
+}
+
+clock() {
+    date -r "$1" '+%H:%M' 2>/dev/null || date -d "@$1" '+%H:%M' 2>/dev/null
+}
+
+folder_error() {
+    echo "Anki-Break could not find its data folder. Restart Claude Code and try again." >&2
+    exit 2
+}
+
+# pause and resume get the data folder and session id from the skill.
+check_skill_args() {
+    # The folder must be a real absolute path, not an unsubstituted ${...}.
+    # Claude Code creates it on first use, so it may not exist yet.
+    case ${1:-} in
+        /*) ;;
+        *) folder_error ;;
+    esac
+    # shellcheck disable=SC2016
+    case $1 in
+        *'${'*) folder_error ;;
+    esac
+    mkdir -p "$1" 2>/dev/null || folder_error
+    if ! valid_session "${2:-}"; then
+        echo "Anki-Break could not tell which chat this is. Restart Claude Code and try again." >&2
+        exit 2
+    fi
+    use_folder "$1"
 }
 
 still_working() {
@@ -286,7 +368,9 @@ bring_back() {
 # ---------------------------------------------------------------- actions
 
 do_start() {
-    sid=$(session_from_stdin)
+    read_input
+    sid=$(json_field session_id)
+    sid=${sid:-default}
     if [ -z "$DATA" ] || disabled || ! is_mac || ! find_anki; then
         return 0
     fi
@@ -295,8 +379,13 @@ do_start() {
         # No terminal or editor behind this Claude Code: a scripted run.
         return 0
     fi
+    if is_paused "$sid"; then
+        log "start $sid skipped, paused in this chat"
+        return 0
+    fi
     mkdir -p "$SESSIONS" "$STOPS" 2>/dev/null || return 0
     find "$SESSIONS" "$STOPS" -type f -mmin "+$CLEANUP_MINUTES" -exec rm -f {} + 2>/dev/null
+    find "$PAUSED" -type f -mmin "+$PAUSE_CLEANUP" -exec rm -f {} + 2>/dev/null
     token="$(date +%s).$$"
     printf '%s\n' "$token" >"$SESSIONS/$sid"
     log "start $sid from $host (delay_seconds=$(delay_seconds) when_done=$(when_done))"
@@ -312,6 +401,9 @@ do_open_later() {
     [ -n "$host" ] || return 0
     sleep "$(delay_seconds)"
     still_working "$sid" "$token" || return 0
+    if is_paused "$sid"; then
+        return 0
+    fi
     if other_recent_stop "$sid"; then
         log "another session just stopped, anki stays closed this turn"
         return 0
@@ -384,8 +476,14 @@ do_open_later() {
 }
 
 do_stop() {
-    sid=$(session_from_stdin)
+    read_input
+    sid=$(json_field session_id)
+    sid=${sid:-default}
     [ -n "$DATA" ] || return 0
+    if [ "$(json_field hook_event_name)" = SessionEnd ]; then
+        # A pause lasts until the chat ends.
+        rm -f "$PAUSED/$sid" 2>/dev/null
+    fi
     token=$(sed -n 1p "$SESSIONS/$sid" 2>/dev/null)
     rm -f "$SESSIONS/$sid" 2>/dev/null
     if [ -z "$token" ] || disabled || ! is_mac; then
@@ -451,14 +549,48 @@ do_finish() {
     fi
 }
 
+do_pause() {
+    check_skill_args "${1:-}" "${2:-}"
+    sid=$2
+    ends=0
+    if [ -n "${3:-}" ]; then
+        if ! minutes=$(duration_minutes "$3"); then
+            echo "Give the pause in minutes or hours, for example 30m or 2h, at most 24h." >&2
+            exit 2
+        fi
+        ends=$(($(date +%s) + minutes * 60))
+    fi
+    mkdir -p "$PAUSED" 2>/dev/null || exit 1
+    echo "$ends" >"$PAUSED/$sid"
+    # A turn that is already counting down does not open Anki either.
+    rm -f "$SESSIONS/$sid" 2>/dev/null
+    if [ "$ends" -eq 0 ]; then
+        log "paused $sid until resumed"
+        echo "Anki-Break is paused in this chat until you run /anki-break:resume or the chat ends."
+    else
+        log "paused $sid for $minutes minutes"
+        echo "Anki-Break is paused in this chat for $minutes minutes, until $(clock "$ends")."
+    fi
+}
+
+do_resume() {
+    check_skill_args "${1:-}" "${2:-}"
+    sid=$2
+    if is_paused "$sid"; then
+        rm -f "$PAUSED/$sid"
+        log "resumed $sid"
+        echo "Anki-Break is on again in this chat."
+    else
+        echo "Anki-Break was not paused in this chat."
+    fi
+}
+
 do_doctor() {
     # Commands run through the Bash tool get no plugin settings or data path,
     # so the doctor skill passes the data folder as an argument and the
     # settings come from the last start line in the log.
     if [ -n "${1:-}" ] && [ -d "$1" ]; then
-        DATA=$1
-        SESSIONS="$DATA/sessions"
-        STOPS="$DATA/stops"
+        use_folder "$1"
     fi
     echo "Anki-Break doctor"
     if is_mac; then
@@ -486,6 +618,18 @@ do_doctor() {
     echo "data folder: $DATA"
     last=$(grep ' start ' "$DATA/log" 2>/dev/null | tail -n 1)
     echo "last prompt: ${last:-no prompt seen yet}"
+    if valid_session "${2:-}"; then
+        if is_paused "$2"; then
+            ends=$(cat "$PAUSED/$2")
+            if [ "$ends" -eq 0 ]; then
+                echo "this chat: paused until /anki-break:resume"
+            else
+                echo "this chat: paused until $(clock "$ends")"
+            fi
+        else
+            echo "this chat: active"
+        fi
+    fi
     echo "working sessions: $(working_count)"
     if [ -f "$DATA/launched" ] && is_mac && [ -n "$ANKI_ID" ] && anki_running; then
         echo "anki opened by anki-break: yes"
@@ -503,9 +647,11 @@ case "${1:-}" in
     stop) do_stop ;;
     open-later) do_open_later "${2:-default}" "${3:-}" ;;
     finish) do_finish "${2:-default}" "${3:-}" ;;
-    doctor) do_doctor "${2:-}" ;;
+    pause) do_pause "${2:-}" "${3:-}" "${4:-}" ;;
+    resume) do_resume "${2:-}" "${3:-}" ;;
+    doctor) do_doctor "${2:-}" "${3:-}" ;;
     *)
-        echo "usage: anki-break.sh start|stop|doctor" >&2
+        echo "usage: anki-break.sh start|stop|pause|resume|doctor" >&2
         exit 2
         ;;
 esac
