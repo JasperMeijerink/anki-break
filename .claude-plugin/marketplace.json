@@ -1,0 +1,15 @@
+{
+  "name": "anki-break",
+  "description": "Marketplace for the Anki-Break plugin.",
+  "owner": {
+    "name": "Jasper Meijerink",
+    "url": "https://github.com/JasperMeijerink"
+  },
+  "plugins": [
+    {
+      "name": "anki-break",
+      "source": "./",
+      "description": "Turns waiting for Claude into flashcard time. On macOS, Anki opens when Claude has been working for a few seconds and closes again when Claude is done or needs you."
+    }
+  ]
+}

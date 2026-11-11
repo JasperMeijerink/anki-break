@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Tests and shellcheck (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: No CRLF line endings
+        run: |
+          if grep -l "$(printf '\r')" scripts/*.sh tests/*.sh hooks/hooks.json; then
+            echo "CRLF line endings found"
+            exit 1
+          fi
+      - name: shellcheck
+        run: shellcheck scripts/*.sh tests/*.sh
+      - name: Tests under sh
+        run: sh tests/run.sh
+      - name: Tests under dash
+        run: TEST_SHELL=dash dash tests/run.sh
+      - name: Tests under bash --posix
+        run: TEST_SHELL="bash --posix" bash --posix tests/run.sh
+
+  macos:
+    name: Tests (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests under the macOS sh
+        run: sh tests/run.sh
+      - name: Tests under the macOS dash
+        run: TEST_SHELL=dash dash tests/run.sh
+      - name: Doctor runs with the real macOS commands
+        run: |
+          mkdir -p "$RUNNER_TEMP/anki-break"
+          sh scripts/anki-break.sh doctor "$RUNNER_TEMP/anki-break" | tee doctor.txt
+          grep -q "system: macOS (supported)" doctor.txt
+      - name: Show the real output formats the script parses
+        continue-on-error: true
+        run: |
+          lsappinfo front
+          lsappinfo info -only bundleid "$(lsappinfo front)"
+          lsappinfo find bundleid=com.apple.finder
+          ioreg -c IOHIDSystem | grep HIDIdleTime | head -n 1
+
+  validate:
+    name: Validate plugin and marketplace
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Pinned so a new validator release cannot turn CI red on its own. Bump on purpose.
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@2.1.318
+      - name: Validate
+        run: claude plugin validate --strict --profile directory "$(pwd)"

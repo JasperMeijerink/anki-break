@@ -1,0 +1,42 @@
+{
+  "name": "anki-break",
+  "displayName": "Anki-Break",
+  "version": "0.1.0",
+  "description": "Turns waiting for Claude into flashcard time. On macOS, Anki opens when Claude has been working for a few seconds and closes again when Claude is done or needs you.",
+  "author": {
+    "name": "Jasper Meijerink",
+    "url": "https://github.com/JasperMeijerink"
+  },
+  "homepage": "https://github.com/JasperMeijerink/anki-break",
+  "repository": "https://github.com/JasperMeijerink/anki-break",
+  "license": "MIT",
+  "keywords": [
+    "anki",
+    "flashcards",
+    "spaced-repetition",
+    "learning",
+    "hooks",
+    "macos",
+    "focus"
+  ],
+  "icon": "./assets/icon.svg",
+  "documentationUrl": "https://github.com/JasperMeijerink/anki-break#readme",
+  "supportUrl": "https://github.com/JasperMeijerink/anki-break/issues",
+  "privacyPolicyUrl": "https://github.com/JasperMeijerink/anki-break/blob/main/PRIVACY.md",
+  "userConfig": {
+    "delay_seconds": {
+      "type": "number",
+      "title": "Seconds before Anki opens",
+      "description": "How long Claude must be working before Anki opens, from 0 to 600. Short answers then never open Anki. Default 15.",
+      "default": 15,
+      "min": 0,
+      "max": 600
+    },
+    "when_done": {
+      "type": "string",
+      "title": "When Claude is done",
+      "description": "Type quit to close Anki when Claude is done (only an Anki that Anki-Break opened), or keep to leave it running in the background, which avoids a cold start and a sync every turn. Default quit.",
+      "default": "quit"
+    }
+  }
+}
